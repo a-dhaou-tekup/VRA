@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --amber: #ffc40d;
+  --amber-dim: #e6a800;
+  --black: #0d0d0d;
+  --dark: #141414;
+  --surface: #1a1a1a;
+  --surface-2: #222222;
+  --border: #2a2a2a;
+  --text: #f0ede8;
+  --muted: #888888;
+  --red: #e05252;
+  --green: #4eaf7c;
+  --blue: #4e8faf;
+  --purple: #9b6dff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--black);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--dark);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+@layer components {
+  /* Risk / severity badges */
+  .badge-critical {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
+    background: rgba(224, 82, 82, 0.15);
+    color: #e05252;
+    border: 1px solid rgba(224, 82, 82, 0.3);
+  }
+  .badge-high {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
+    background: rgba(255, 196, 13, 0.15);
+    color: #ffc40d;
+    border: 1px solid rgba(255, 196, 13, 0.3);
+  }
+  .badge-medium {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
+    background: rgba(78, 143, 175, 0.15);
+    color: #4e8faf;
+    border: 1px solid rgba(78, 143, 175, 0.3);
+  }
+  .badge-low {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
+    background: rgba(78, 175, 124, 0.15);
+    color: #4eaf7c;
+    border: 1px solid rgba(78, 175, 124, 0.3);
+  }
+  .badge-info {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
+    background: rgba(136, 136, 136, 0.15);
+    color: #888888;
+    border: 1px solid rgba(136, 136, 136, 0.3);
+  }
+
+  /* Status text colors */
+  .status-critical {
+    color: #e05252;
+  }
+  .status-high {
+    color: #ffc40d;
+  }
+  .status-medium {
+    color: #4e8faf;
+  }
+  .status-low {
+    color: #4eaf7c;
+  }
+
+  /* VRA card */
+  .vra-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 22px;
+  }
+
+  /* Page header */
+  .page-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 30px;
+    color: white;
+  }
+
+  /* Mono label */
+  .mono-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* Amber button */
+  .btn-amber {
+    @apply px-4 py-2 rounded font-semibold text-sm transition-colors cursor-pointer;
+    background: var(--amber);
+    color: var(--black);
+  }
+  .btn-amber:hover {
+    background: var(--amber-dim);
+  }
+  .btn-amber:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Ghost button */
+  .btn-ghost {
+    @apply px-3 py-1.5 rounded text-sm transition-colors cursor-pointer;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn-ghost:hover {
+    border-color: var(--muted);
+    background: var(--surface-2);
+  }
+}

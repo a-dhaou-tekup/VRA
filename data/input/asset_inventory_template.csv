@@ -1,0 +1,8 @@
+"asset_id","hostname","ip_address","business_unit","business_owner","criticality","internet_exposed","environment"
+"","example-web-01","203.0.113.10","IT","it-team@yourcompany.com","critical","true","production"
+"","example-app-01","10.0.1.20","Engineering","eng-team@yourcompany.com","high","false","production"
+"","example-db-01","10.0.1.30","Engineering","dba-team@yourcompany.com","critical","false","production"
+"","example-vpn-gw","203.0.113.20","IT","it-team@yourcompany.com","critical","true","production"
+"","example-dc-01","10.0.0.10","IT","it-team@yourcompany.com","critical","false","production"
+"","example-workstation-01","10.0.2.50","Finance","fin-team@yourcompany.com","medium","false","production"
+"","example-build-srv","10.0.3.10","Engineering","devops@yourcompany.com","medium","false","staging"

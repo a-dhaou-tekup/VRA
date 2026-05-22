@@ -1,0 +1,405 @@
+"""Database migrations — idempotent table creation, ALTER TABLE patches, and CSV seeding."""
+
+import csv
+import json
+import logging
+import sqlite3
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Use bcrypt directly (passlib 1.7.4 + bcrypt 4.x have a version-detection bug).
+def _hash_password(plain: str) -> str:  # noqa: E302
+    import bcrypt
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+logger = logging.getLogger(__name__)
+
+ROOT = Path(__file__).parent.parent.parent.parent
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def safe_json_loads(v, default=None):
+    if default is None:
+        default = []
+    if not v:
+        return default
+    try:
+        return json.loads(v)
+    except Exception:
+        return default
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    cursor = conn.execute(f"PRAGMA table_info({table})")
+    cols = [row[1] for row in cursor.fetchall()]
+    return column in cols
+
+
+# ── Table creation ────────────────────────────────────────────────────────────
+
+def _create_tables(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS assets (
+            asset_id        TEXT PRIMARY KEY,
+            hostname        TEXT,
+            ip_address      TEXT,
+            business_owner  TEXT,
+            business_unit   TEXT,
+            criticality     TEXT,
+            environment     TEXT,
+            internet_exposed INTEGER DEFAULT 0,
+            created_at      TEXT,
+            updated_at      TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id               TEXT PRIMARY KEY,
+            job_fingerprint      TEXT UNIQUE,
+            asset_ids            TEXT,
+            cve_list             TEXT,
+            main_product         TEXT,
+            plugin_family        TEXT,
+            max_risk_level       TEXT,
+            risk_score_max       REAL,
+            business_owner       TEXT,
+            business_unit        TEXT,
+            environment          TEXT,
+            kev_present          INTEGER DEFAULT 0,
+            kev_cves             TEXT,
+            affected_asset_count INTEGER,
+            cve_count            INTEGER,
+            score_breakdown      TEXT,
+            sla_days             INTEGER,
+            created_at           TEXT,
+            due_date             TEXT,
+            status               TEXT DEFAULT 'TO_DO',
+            triage_decision      TEXT,
+            assigned_team        TEXT,
+            closed_at            TEXT,
+            fixed_at             TEXT,
+            updated_at           TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS job_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id      TEXT REFERENCES jobs(job_id),
+            event_type  TEXT,
+            old_status  TEXT,
+            new_status  TEXT,
+            changed_by  TEXT,
+            comment     TEXT,
+            created_at  TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS llm_advice (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id              TEXT REFERENCES jobs(job_id),
+            cve_hash            TEXT,
+            product             TEXT,
+            recommendation_json TEXT,
+            model_name          TEXT,
+            prompt_tokens       INTEGER,
+            response_tokens     INTEGER,
+            latency_ms          INTEGER,
+            feedback            INTEGER DEFAULT 0,
+            created_at          TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ticket_links (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id     TEXT REFERENCES jobs(job_id),
+            provider   TEXT,
+            ticket_id  TEXT,
+            ticket_url TEXT,
+            created_at TEXT,
+            synced_at  TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS uploads (
+            id                  TEXT PRIMARY KEY,
+            filename            TEXT,
+            original_filename   TEXT,
+            sha256              TEXT,
+            scanner_type        TEXT,
+            file_size           INTEGER,
+            uploaded_by         TEXT,
+            uploaded_at         TEXT,
+            status              TEXT DEFAULT 'queued',
+            stats_json          TEXT,
+            error_message       TEXT,
+            pipeline_triggered  INTEGER DEFAULT 0
+        )
+    """)
+
+    # ── RBAC: users ───────────────────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            username      TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role          TEXT NOT NULL CHECK(role IN (
+                              'admin', 'analyst', 'remediation_owner',
+                              'risk_owner', 'auditor')),
+            active        INTEGER DEFAULT 1,
+            created_at    TEXT
+        )
+    """)
+
+    # ── P2: risk acceptances ──────────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS risk_acceptances (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id                TEXT NOT NULL REFERENCES jobs(job_id),
+            accepted_by           TEXT NOT NULL,
+            justification         TEXT NOT NULL,
+            compensating_controls TEXT,
+            expiry_date           TEXT,
+            review_trigger        TEXT,
+            status                TEXT NOT NULL DEFAULT 'active'
+                                      CHECK(status IN ('active', 'expired', 'superseded')),
+            created_at            TEXT NOT NULL
+        )
+    """)
+
+    # ── P2: workaround records ────────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workaround_records (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id              TEXT NOT NULL REFERENCES jobs(job_id),
+            control_description TEXT NOT NULL,
+            followup_date       TEXT,
+            recorded_by         TEXT NOT NULL,
+            created_at          TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+
+
+# ── ALTER TABLE patches ───────────────────────────────────────────────────────
+
+def _alter_tables(conn: sqlite3.Connection) -> None:
+    """Add columns that may be missing from tables created by older schema versions."""
+    jobs_patches = [
+        ("score_breakdown",  "TEXT"),
+        ("job_fingerprint",  "TEXT"),
+        ("triage_decision",  "TEXT"),
+        ("assigned_team",    "TEXT"),
+        ("closed_at",        "TEXT"),
+        ("fixed_at",         "TEXT"),
+        ("updated_at",       "TEXT"),
+        # P2: SLA pause tracking + lifecycle free-text note
+        ("sla_paused_at",    "TEXT"),
+        ("sla_paused_days",  "INTEGER DEFAULT 0"),
+        ("lifecycle_note",   "TEXT"),
+    ]
+
+    for col_name, col_type in jobs_patches:
+        if not _column_exists(conn, "jobs", col_name):
+            try:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+                logger.info("migrate: added jobs.%s", col_name)
+            except sqlite3.OperationalError as exc:
+                logger.warning("migrate: could not add jobs.%s — %s", col_name, exc)
+
+
+# ── CSV seeding ───────────────────────────────────────────────────────────────
+
+def _seed_jobs(conn: sqlite3.Connection) -> int:
+    csv_path = ROOT / "data" / "output" / "remediation_jobs.csv"
+    if not csv_path.exists():
+        return 0
+
+    row_count = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+    if row_count > 0:
+        return 0
+
+    count = 0
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            for row in reader:
+                job = {k: (v if v != "" else None) for k, v in row.items()}
+
+                # Ensure required key exists
+                if not job.get("job_id"):
+                    job["job_id"] = str(uuid.uuid4())
+
+                # Numeric coercions
+                for f in ("sla_days", "affected_asset_count", "cve_count"):
+                    if job.get(f) is not None:
+                        try:
+                            job[f] = int(float(job[f]))
+                        except (ValueError, TypeError):
+                            job[f] = None
+
+                if job.get("risk_score_max") is not None:
+                    try:
+                        job["risk_score_max"] = float(job["risk_score_max"])
+                    except (ValueError, TypeError):
+                        job["risk_score_max"] = None
+
+                if job.get("kev_present") is not None:
+                    try:
+                        job["kev_present"] = int(float(job["kev_present"]))
+                    except (ValueError, TypeError):
+                        job["kev_present"] = 0
+
+                job.setdefault("status", "TO_DO")
+                job.setdefault("created_at", now)
+                job.setdefault("updated_at", now)
+
+                cols = [
+                    "job_id", "job_fingerprint", "asset_ids", "cve_list", "main_product",
+                    "plugin_family", "max_risk_level", "risk_score_max", "business_owner",
+                    "business_unit", "environment", "kev_present", "kev_cves",
+                    "affected_asset_count", "cve_count", "score_breakdown", "sla_days",
+                    "created_at", "due_date", "status", "triage_decision", "assigned_team",
+                    "closed_at", "fixed_at", "updated_at",
+                    "sla_paused_at", "sla_paused_days", "lifecycle_note",
+                ]
+                present = {c: job.get(c) for c in cols}
+                col_list = ", ".join(present.keys())
+                placeholders = ", ".join("?" * len(present))
+                conn.execute(
+                    f"INSERT OR IGNORE INTO jobs ({col_list}) VALUES ({placeholders})",
+                    list(present.values()),
+                )
+                count += 1
+
+        conn.commit()
+        logger.info("migrate: seeded %d jobs from %s", count, csv_path)
+    except Exception as exc:
+        logger.error("migrate: job seeding failed — %s", exc)
+
+    return count
+
+
+def _seed_assets(conn: sqlite3.Connection) -> int:
+    csv_path = ROOT / "data" / "input" / "asset_inventory.csv"
+    if not csv_path.exists():
+        return 0
+
+    row_count = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    if row_count > 0:
+        return 0
+
+    count = 0
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            for row in reader:
+                asset_id = (
+                    row.get("asset_id")
+                    or row.get("hostname")
+                    or f"ASSET-{count}"
+                )
+                internet_exposed = int(
+                    str(row.get("internet_exposed", "0")).strip().lower()
+                    in ("1", "true", "yes", "y")
+                )
+                conn.execute(
+                    """INSERT OR IGNORE INTO assets
+                       (asset_id, hostname, ip_address, business_owner, business_unit,
+                        criticality, environment, internet_exposed, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        asset_id,
+                        row.get("hostname", ""),
+                        row.get("ip_address", row.get("ip", "")),
+                        row.get("business_owner", ""),
+                        row.get("business_unit", ""),
+                        row.get("criticality", ""),
+                        row.get("environment", ""),
+                        internet_exposed,
+                        row.get("created_at", now),
+                        now,
+                    ),
+                )
+                count += 1
+
+        conn.commit()
+        logger.info("migrate: seeded %d assets from %s", count, csv_path)
+    except Exception as exc:
+        logger.error("migrate: asset seeding failed — %s", exc)
+
+    return count
+
+
+# ── User seeding ──────────────────────────────────────────────────────────────
+
+# Demo credentials — one per role.  Change passwords before any real deployment.
+_DEMO_USERS = [
+    ("admin",             "Admin1234!",      "admin"),
+    ("analyst",           "Analyst1234!",    "analyst"),
+    ("remediation_owner", "RemOwner1234!",   "remediation_owner"),
+    ("risk_owner",        "RiskOwner1234!",  "risk_owner"),
+    ("auditor",           "Auditor1234!",    "auditor"),
+]
+
+
+def _seed_users(conn: sqlite3.Connection) -> int:
+    """Insert demo users if the table is empty. Skips individual rows that already exist."""
+    existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    if existing > 0:
+        return 0
+
+    now = datetime.now(timezone.utc).isoformat()
+    count = 0
+    try:
+        for username, plain_password, role in _DEMO_USERS:
+            password_hash = _hash_password(plain_password)
+            conn.execute(
+                """INSERT OR IGNORE INTO users (username, password_hash, role, active, created_at)
+                   VALUES (?, ?, ?, 1, ?)""",
+                (username, password_hash, role, now),
+            )
+            count += 1
+        conn.commit()
+        logger.info("migrate: seeded %d demo users.", count)
+    except Exception as exc:
+        logger.error("migrate: user seeding failed — %s", exc)
+    return count
+
+
+# ── Public entry point ────────────────────────────────────────────────────────
+
+def run_migrations(conn: sqlite3.Connection) -> None:
+    """Run all migrations in order. Safe to call multiple times."""
+    logger.info("migrate: starting…")
+    _create_tables(conn)
+    _alter_tables(conn)
+
+    try:
+        _seed_jobs(conn)
+    except Exception as exc:
+        logger.warning("migrate: job seeding skipped — %s", exc)
+
+    try:
+        _seed_assets(conn)
+    except Exception as exc:
+        logger.warning("migrate: asset seeding skipped — %s", exc)
+
+    try:
+        _seed_users(conn)
+    except Exception as exc:
+        logger.warning("migrate: user seeding skipped — %s", exc)
+
+    logger.info("migrate: done.")

@@ -1,0 +1,33 @@
+# Scanner column name mappings to VRA's internal schema.
+# Each scanner adapter uses this file to normalise column names.
+
+nessus:
+  host: hostname
+  "IP Address": ip_address
+  "CVE": cve_id
+  "CVSS v3.0 Base Score": cvss_base_score
+  "Risk": severity
+  "Plugin Name": plugin_name
+  "Synopsis": vuln_title
+  "First Discovered": first_seen
+  "Last Observed": last_seen
+  "Plugin Family": plugin_family
+
+openvas:
+  host: hostname
+  ip: ip_address
+  nvt_oid: plugin_id
+  cvss_base: cvss_base_score
+  threat: severity
+  name: vuln_title
+  first_seen: first_seen
+  last_seen: last_seen
+  family: plugin_family
+
+csv_generic:
+  # Minimum required columns; extra columns are passed through as-is
+  required:
+    - cve_id
+    - hostname
+    - cvss_base_score
+    - severity

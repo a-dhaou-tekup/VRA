@@ -1,0 +1,67 @@
+# VRA Policy Configuration
+# All weights and thresholds used by the risk engine, SLA engine, and RAG pipeline.
+
+# ── Risk Scoring ─────────────────────────────────────────────────────────────
+# Each factor contributes up to its weight value.
+# Total maximum score = 100.
+risk_scoring:
+  weights:
+    cvss: 40         # CVSS base score / 10 → [0,1] × 40
+    kev: 20          # CISA Known Exploited flag (0 or 1) × 20
+    epss: 15         # FIRST EPSS probability [0,1] × 15
+    criticality: 15  # Asset criticality multiplier × 15
+    exposure: 10     # Internet-exposed flag (0 or 1) × 10
+
+  # Criticality multipliers (applied to criticality weight)
+  criticality_map:
+    low: 0.25
+    medium: 0.50
+    high: 0.75
+    critical: 1.00
+
+  # Risk level thresholds (score ranges)
+  thresholds:
+    critical: 80   # score >= 80
+    high: 60       # score >= 60
+    medium: 40     # score >= 40
+                   # score < 40 → Low
+
+# ── SLA Policy ───────────────────────────────────────────────────────────────
+# Maximum days to resolve a job per risk level.
+sla_days:
+  CRITICAL: 7
+  HIGH: 14
+  MEDIUM: 30
+  LOW: 90
+
+# Number of days before SLA expiry to show "Due Soon" warning
+sla_due_soon_days: 7
+
+# ── Job Grouping ─────────────────────────────────────────────────────────────
+# Group vulnerabilities into remediation jobs by these keys.
+job_grouping:
+  primary_key: asset_id
+  secondary_keys:
+    - product_name
+    - package
+    - plugin_family
+
+# ── RAG / AI Configuration ───────────────────────────────────────────────────
+rag:
+  model: qwen2.5:14b           # Ollama model — qwen2.5:14b uses ~10 GB VRAM on RTX 4070 Ti Super
+  ollama_url: http://localhost:11434
+  top_k_chunks: 5              # Number of advisory chunks to retrieve per query
+  max_tokens_before_truncation: 6000   # Truncate to top_3 if estimated tokens exceed this
+  chroma_persist_dir: data/rag_corpus/chroma_db
+  embedding_model: all-MiniLM-L6-v2   # Local embedding model via sentence-transformers
+  corpus_dir: data/rag_corpus
+
+  # Structured output schema enforced via Ollama format:json
+  output_schema:
+    - summary
+    - exploitation_likelihood   # high | medium | low
+    - remediation_steps         # list of strings
+    - compensating_controls     # list of strings
+    - verification              # how to confirm fix
+    - references                # list of CVE IDs or vendor URLs
+    - confidence                # float 0.0-1.0
