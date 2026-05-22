@@ -145,7 +145,7 @@ def get_chroma_stats() -> dict:
     return {
         "total_chunks":    0,
         "total_files":     0,
-        "collection_name": "vra_rag",
+        "collection_name": "vra_advisories",   # matches indexer.py collection name
         "model":           "unavailable",
         "error":           "RAG retriever not initialised",
     }

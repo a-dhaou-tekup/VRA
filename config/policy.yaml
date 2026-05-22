@@ -55,6 +55,7 @@ rag:
   chroma_persist_dir: data/rag_corpus/chroma_db
   embedding_model: all-MiniLM-L6-v2   # Local embedding model via sentence-transformers
   corpus_dir: data/rag_corpus
+  ollama_timeout: 300                  # seconds; override with OLLAMA_TIMEOUT_SECONDS env var
 
   # Structured output schema enforced via Ollama format:json
   output_schema:

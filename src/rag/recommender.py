@@ -127,9 +127,15 @@ def call_ollama(
         ],
     }
 
+    import os
+    timeout_sec = int(
+        config.get("ollama_timeout")
+        or os.getenv("OLLAMA_TIMEOUT_SECONDS", "300")
+    )
+
     start = time.monotonic()
     try:
-        resp = requests.post(url, json=payload, timeout=300)
+        resp = requests.post(url, json=payload, timeout=timeout_sec)
         resp.raise_for_status()
         data = resp.json()
         latency_ms = int((time.monotonic() - start) * 1000)

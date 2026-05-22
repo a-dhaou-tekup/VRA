@@ -49,17 +49,18 @@ def recommend(
     result = rag_service.generate_recommendation(job)
     latency_ms = int((time.monotonic() - start) * 1000)
 
-    # Persist to cache
+    # Persist to cache — metadata is nested under result["_meta"] by recommender.py
+    _meta = result.get("_meta") or {}
     try:
         rag_service.cache_advice(
             conn,
             job_id=job_id,
             job=job,
             recommendation_json=result,
-            model_name=result.get("model", "unknown"),
-            latency_ms=latency_ms,
-            prompt_tokens=result.get("prompt_tokens", 0),
-            response_tokens=result.get("response_tokens", 0),
+            model_name=_meta.get("model") or result.get("model", "unknown"),
+            latency_ms=_meta.get("latency_ms") or latency_ms,
+            prompt_tokens=_meta.get("prompt_tokens") or result.get("prompt_tokens", 0),
+            response_tokens=_meta.get("response_tokens") or result.get("response_tokens", 0),
         )
     except Exception as exc:
         logger.warning("Failed to cache advice for job %s: %s", job_id, exc)

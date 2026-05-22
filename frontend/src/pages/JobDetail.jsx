@@ -243,7 +243,7 @@ function WorkaroundModal({ jobId, onClose, onCreated }) {
 
 export default function JobDetail() {
   const { id } = useParams()
-  const { role, user } = useAuth()
+  const { role } = useAuth()
 
   const [job, setJob] = useState(null)
   const [events, setEvents] = useState([])
