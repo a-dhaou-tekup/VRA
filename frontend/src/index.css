@@ -2,145 +2,173 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── StrangeBee-inspired design tokens ──────────────────────────────────────── */
 :root {
-  --amber: #ffc40d;
-  --amber-dim: #e6a800;
-  --black: #0d0d0d;
-  --dark: #141414;
-  --surface: #1a1a1a;
-  --surface-2: #222222;
-  --border: #2a2a2a;
-  --text: #f0ede8;
-  --muted: #888888;
-  --red: #e05252;
-  --green: #4eaf7c;
-  --blue: #4e8faf;
-  --purple: #9b6dff;
+  /* Brand accent — StrangeBee orange-gold */
+  --amber:     #f5a623;
+  --amber-dim: #d4920a;
+  --amber-glow: rgba(245,166,35,0.18);
+
+  /* Dark navy scale (deepest → lightest surface) */
+  --black:     #0b0d17;
+  --dark:      #0f1120;
+  --surface:   #151828;
+  --surface-2: #1c1f35;
+  --surface-3: #232641;
+
+  /* Borders */
+  --border:    #252842;
+  --border-2:  #313459;
+
+  /* Text */
+  --text:      #e2e0ed;
+  --muted:     #7a7d9c;
+
+  /* Semantic */
+  --red:       #e05252;
+  --green:     #4eaf7c;
+  --blue:      #4e8faf;
+  --purple:    #9b6dff;
+  --orange:    #ff6b35;
+
+  /* Sidebar */
+  --sidebar-w: 244px;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
-  background: var(--black);
+  background: var(--dark);
   color: var(--text);
   font-family: 'Inter', sans-serif;
   margin: 0;
   padding: 0;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: var(--dark);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
-}
+/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 5px; height: 5px; }
+::-webkit-scrollbar-track  { background: var(--black); }
+::-webkit-scrollbar-thumb  { background: var(--border-2); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
+/* ── Component layer ────────────────────────────────────────────────────────── */
 @layer components {
-  /* Risk / severity badges */
+
+  /* ── Risk / severity badges ── */
   .badge-critical {
-    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
-    background: rgba(224, 82, 82, 0.15);
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold uppercase tracking-wider;
+    font-family: 'IBM Plex Mono', monospace;
+    background: rgba(224,82,82,0.12);
     color: #e05252;
-    border: 1px solid rgba(224, 82, 82, 0.3);
+    border: 1px solid rgba(224,82,82,0.28);
   }
   .badge-high {
-    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
-    background: rgba(255, 196, 13, 0.15);
-    color: #ffc40d;
-    border: 1px solid rgba(255, 196, 13, 0.3);
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold uppercase tracking-wider;
+    font-family: 'IBM Plex Mono', monospace;
+    background: rgba(245,166,35,0.12);
+    color: #f5a623;
+    border: 1px solid rgba(245,166,35,0.28);
   }
   .badge-medium {
-    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
-    background: rgba(78, 143, 175, 0.15);
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold uppercase tracking-wider;
+    font-family: 'IBM Plex Mono', monospace;
+    background: rgba(78,143,175,0.12);
     color: #4e8faf;
-    border: 1px solid rgba(78, 143, 175, 0.3);
+    border: 1px solid rgba(78,143,175,0.28);
   }
   .badge-low {
-    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
-    background: rgba(78, 175, 124, 0.15);
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold uppercase tracking-wider;
+    font-family: 'IBM Plex Mono', monospace;
+    background: rgba(78,175,124,0.12);
     color: #4eaf7c;
-    border: 1px solid rgba(78, 175, 124, 0.3);
+    border: 1px solid rgba(78,175,124,0.28);
   }
   .badge-info {
-    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase tracking-wider;
-    background: rgba(136, 136, 136, 0.15);
-    color: #888888;
-    border: 1px solid rgba(136, 136, 136, 0.3);
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-semibold uppercase tracking-wider;
+    font-family: 'IBM Plex Mono', monospace;
+    background: rgba(122,125,156,0.12);
+    color: #7a7d9c;
+    border: 1px solid rgba(122,125,156,0.25);
   }
 
-  /* Status text colors */
-  .status-critical {
-    color: #e05252;
-  }
-  .status-high {
-    color: #ffc40d;
-  }
-  .status-medium {
-    color: #4e8faf;
-  }
-  .status-low {
-    color: #4eaf7c;
-  }
-
-  /* VRA card */
+  /* ── VRA card ── */
   .vra-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 22px;
+    border-radius: 12px;
+    padding: 24px;
   }
 
-  /* Page header */
+  /* ── Page header ── */
   .page-title {
     font-family: 'Syne', sans-serif;
     font-weight: 800;
-    font-size: 30px;
-    color: white;
+    font-size: 28px;
+    color: var(--text);
+    letter-spacing: -0.02em;
   }
 
-  /* Mono label */
+  /* ── Mono label ── */
   .mono-label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 10px;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--muted);
+    font-weight: 500;
   }
 
-  /* Amber button */
+  /* ── Primary button ── */
   .btn-amber {
-    @apply px-4 py-2 rounded font-semibold text-sm transition-colors cursor-pointer;
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-semibold text-sm
+           transition-all duration-150 cursor-pointer select-none;
     background: var(--amber);
-    color: var(--black);
+    color: #000;
+    border: none;
+    box-shadow: 0 0 0 0 var(--amber-glow);
   }
-  .btn-amber:hover {
+  .btn-amber:hover:not(:disabled) {
     background: var(--amber-dim);
+    box-shadow: 0 0 14px var(--amber-glow);
   }
   .btn-amber:disabled {
     opacity: 0.4;
     cursor: not-allowed;
   }
 
-  /* Ghost button */
+  /* ── Ghost button ── */
   .btn-ghost {
-    @apply px-3 py-1.5 rounded text-sm transition-colors cursor-pointer;
+    @apply inline-flex items-center justify-center px-3 py-1.5 rounded-lg text-sm
+           transition-all duration-150 cursor-pointer select-none;
     background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
+    border: 1px solid var(--border-2);
+    color: var(--muted);
   }
-  .btn-ghost:hover {
-    border-color: var(--muted);
+  .btn-ghost:hover:not(:disabled) {
+    border-color: var(--amber);
+    color: var(--amber);
+    background: var(--amber-glow);
+  }
+  .btn-ghost:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ── Input base ── */
+  .vra-input {
     background: var(--surface-2);
+    border: 1px solid var(--border-2);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    width: 100%;
+    transition: border-color 0.15s;
+  }
+  .vra-input:focus {
+    border-color: rgba(245,166,35,0.45);
   }
 }
