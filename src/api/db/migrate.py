@@ -51,7 +51,11 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             environment     TEXT,
             internet_exposed INTEGER DEFAULT 0,
             created_at      TEXT,
-            updated_at      TEXT
+            updated_at      TEXT,
+            -- P4a fleet fields (added via ALTER TABLE if missing)
+            os_version      TEXT,
+            site            TEXT,
+            owning_team     TEXT
         )
     """)
 
@@ -110,7 +114,13 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             response_tokens     INTEGER,
             latency_ms          INTEGER,
             feedback            INTEGER DEFAULT 0,
-            created_at          TEXT
+            created_at          TEXT,
+            -- AI layer extension (2025-05-24)
+            interaction_type    TEXT    DEFAULT 'recommendation',
+            question            TEXT,
+            citations_json      TEXT,
+            disposition         TEXT,
+            feedback_note       TEXT
         )
     """)
 
@@ -157,6 +167,59 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # ── P4a: software inventory ───────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS asset_software (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_id    TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+            product     TEXT NOT NULL,
+            version     TEXT,
+            vendor      TEXT,
+            cpe         TEXT,
+            created_at  TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uidx_asset_software
+        ON asset_software(asset_id, product, version)
+    """)
+
+    # ── P4b: threat alerts + CPE-CVE match cache ──────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS threat_alerts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_id        TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+            cve_id          TEXT NOT NULL,
+            source          TEXT NOT NULL DEFAULT 'nvd',
+            severity        TEXT,
+            epss_score      REAL DEFAULT 0,
+            is_kev          INTEGER DEFAULT 0,
+            matched_cpe     TEXT,
+            matched_product TEXT,
+            matched_version TEXT,
+            alert_type      TEXT NOT NULL
+                                CHECK(alert_type IN ('cpe_match','kev_match','high_epss')),
+            status          TEXT NOT NULL DEFAULT 'open'
+                                CHECK(status IN ('open','dismissed','resolved')),
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uidx_threat_alert
+        ON threat_alerts(asset_id, cve_id)
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cpe_cve_cache (
+            cpe         TEXT NOT NULL,
+            cve_id      TEXT NOT NULL,
+            severity    TEXT,
+            cached_at   TEXT NOT NULL,
+            PRIMARY KEY (cpe, cve_id)
+        )
+    """)
+
     # ── P2: risk acceptances ──────────────────────────────────────────────────
     conn.execute("""
         CREATE TABLE IF NOT EXISTS risk_acceptances (
@@ -185,6 +248,53 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # ── Compliance control mapping ────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS control_catalog (
+            control_id    TEXT PRIMARY KEY,
+            framework     TEXT NOT NULL,
+            name          TEXT NOT NULL,
+            description   TEXT,
+            objective     TEXT,
+            vra_features  TEXT,
+            deep_links    TEXT,
+            is_supporting INTEGER DEFAULT 0,
+            loaded_at     TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS job_controls (
+            job_id      TEXT NOT NULL REFERENCES jobs(job_id)            ON DELETE CASCADE,
+            control_id  TEXT NOT NULL REFERENCES control_catalog(control_id) ON DELETE CASCADE,
+            tagged_by   TEXT,
+            tagged_at   TEXT NOT NULL,
+            PRIMARY KEY (job_id, control_id)
+        )
+    """)
+
+    # ── Chat with Finding (feat/chat-with-finding) ────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id           TEXT PRIMARY KEY,
+            job_id       TEXT NOT NULL REFERENCES jobs(job_id),
+            started_by   TEXT NOT NULL,
+            started_at   TEXT NOT NULL,
+            title        TEXT
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_turns (
+            id                  TEXT PRIMARY KEY,
+            conversation_id     TEXT NOT NULL REFERENCES conversations(id),
+            role                TEXT NOT NULL CHECK (role IN ('user','assistant','partial')),
+            content             TEXT NOT NULL,
+            retrieved_docs_json TEXT,
+            created_at          TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
 
 
@@ -204,6 +314,8 @@ def _alter_tables(conn: sqlite3.Connection) -> None:
         ("sla_paused_at",    "TEXT"),
         ("sla_paused_days",  "INTEGER DEFAULT 0"),
         ("lifecycle_note",   "TEXT"),
+        # custom SLA override (days)
+        ("sla_override_days", "INTEGER"),
     ]
 
     for col_name, col_type in jobs_patches:
@@ -214,6 +326,45 @@ def _alter_tables(conn: sqlite3.Connection) -> None:
                 logger.info("migrate: added jobs.%s", col_name)
             except sqlite3.OperationalError as exc:
                 logger.warning("migrate: could not add jobs.%s — %s", col_name, exc)
+
+    # P4a: new fleet columns on assets
+    assets_patches = [
+        ("os_version",  "TEXT"),
+        ("site",        "TEXT"),
+        ("owning_team", "TEXT"),
+        # asset type + platform for cascade dropdowns
+        ("asset_type",  "TEXT"),
+        ("platform",    "TEXT"),
+    ]
+    for col_name, col_type in assets_patches:
+        if not _column_exists(conn, "assets", col_name):
+            try:
+                conn.execute(f"ALTER TABLE assets ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+                logger.info("migrate: added assets.%s", col_name)
+            except sqlite3.OperationalError as exc:
+                logger.warning("migrate: could not add assets.%s — %s", col_name, exc)
+
+    # AI layer extension — new columns on llm_advice
+    llm_advice_patches = [
+        ("interaction_type", "TEXT DEFAULT 'recommendation'"),
+        ("question",         "TEXT"),
+        ("citations_json",   "TEXT"),
+        ("disposition",      "TEXT"),
+        ("feedback_note",    "TEXT"),
+    ]
+    for col_name, col_type in llm_advice_patches:
+        if not _column_exists(conn, "llm_advice", col_name):
+            try:
+                conn.execute(
+                    f"ALTER TABLE llm_advice ADD COLUMN {col_name} {col_type}"
+                )
+                conn.commit()
+                logger.info("migrate: added llm_advice.%s", col_name)
+            except sqlite3.OperationalError as exc:
+                logger.warning(
+                    "migrate: could not add llm_advice.%s — %s", col_name, exc
+                )
 
 
 # ── CSV seeding ───────────────────────────────────────────────────────────────

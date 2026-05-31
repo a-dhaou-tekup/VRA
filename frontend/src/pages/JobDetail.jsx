@@ -4,6 +4,7 @@ import {
   fetchJob,
   fetchJobEvents,
   triageJob,
+  updateJobSla,
   fetchRagRecommendation,
   submitRagFeedback,
   transitionJob,
@@ -15,6 +16,8 @@ import {
 import { useAuth } from '../context/AuthContext'
 import RiskBadge from '../components/RiskBadge'
 import StatusBadge from '../components/StatusBadge'
+import { jobLabel } from '../utils/jobLabel'
+import ChatPanel from '../components/ChatPanel'
 
 // Full 15-state machine transitions (mirrors lifecycle_service.py)
 const STATUS_TRANSITIONS = {
@@ -31,7 +34,7 @@ const STATUS_TRANSITIONS = {
   FALSE_POSITIVE:       ['TO_DO'],
   DEFERRED:             ['IN_PROGRESS', 'RISK_ACCEPTED'],
   VERIFIED:             ['CLOSED'],
-  CLOSED:               [],
+  CLOSED:               ['RESURFACED'],   // reopen a closed job
   RESURFACED:           ['TO_DO', 'IN_PROGRESS'],
 }
 
@@ -263,16 +266,23 @@ export default function JobDetail() {
   const [triageTeam, setTriageTeam] = useState('')
   const [triageComment, setTriageComment] = useState('')
   const [triageLoading, setTriageLoading] = useState(false)
+  const [showRationaleAlert, setShowRationaleAlert] = useState(false)
 
   // Lifecycle transition
+  const [transTarget, setTransTarget]   = useState('')
   const [transComment, setTransComment] = useState('')
-  const [transNote, setTransNote] = useState('')
+  const [transNote, setTransNote]       = useState('')
   const [transLoading, setTransLoading] = useState(false)
-  const [transError, setTransError] = useState(null)
+  const [transError, setTransError]     = useState(null)
 
   // Modals
   const [showRaModal, setShowRaModal] = useState(false)
   const [showWrModal, setShowWrModal] = useState(false)
+
+  // Custom SLA override
+  const [slaOverride, setSlaOverride] = useState('')
+  const [slaLoading, setSlaLoading] = useState(false)
+  const [slaMsg, setSlaMsg] = useState(null)
 
   const canWrite = ['analyst', 'remediation_owner', 'risk_owner', 'admin'].includes(role)
   const canRiskAccept = ['risk_owner', 'admin'].includes(role)
@@ -313,6 +323,7 @@ export default function JobDetail() {
         lifecycle_note: transNote || undefined,
       })
       setJob(res.data?.data ?? res.data)
+      setTransTarget('')
       setTransComment('')
       setTransNote('')
       // Reload events
@@ -329,6 +340,11 @@ export default function JobDetail() {
   const handleTriage = async (e) => {
     e.preventDefault()
     if (!triageDecision) return
+    // RISK_ACCEPTED requires a risk acceptance record first — block and prompt
+    if (triageDecision === 'RISK_ACCEPTED') {
+      setShowRationaleAlert(true)
+      return
+    }
     setTriageLoading(true)
     try {
       const res = await triageJob(id, {
@@ -356,7 +372,14 @@ export default function JobDetail() {
     setAiRec(null)
     try {
       const res = await fetchRagRecommendation(id)
-      setAiRec(res.data)
+      // API wraps in { data: {...} }; unwrap like other endpoints
+      const rec = res.data?.data ?? res.data
+      // Flatten _meta so model/latency_ms are always at top level
+      if (rec?._meta && !rec.model) {
+        rec.model      = rec._meta.model
+        rec.latency_ms = rec._meta.latency_ms
+      }
+      setAiRec(rec)
     } catch (e) {
       setAiError(e.response?.data?.detail || e.message || 'AI recommendation unavailable')
     } finally {
@@ -369,6 +392,26 @@ export default function JobDetail() {
       await submitRagFeedback(id, { rating })
       setFeedbackSent(rating)
     } catch { /* silent */ }
+  }
+
+  // ── Custom SLA override ───────────────────────────────────────────────────
+
+  const handleSlaOverride = async (e) => {
+    e.preventDefault()
+    setSlaLoading(true)
+    setSlaMsg(null)
+    try {
+      const days = slaOverride === '' ? null : parseInt(slaOverride, 10)
+      const res = await updateJobSla(id, { sla_override_days: days })
+      setJob(res.data?.data ?? res.data)
+      setSlaMsg({ type: 'ok', text: days ? `SLA set to ${days} days` : 'SLA override cleared' })
+      setSlaOverride('')
+    } catch (e) {
+      setSlaMsg({ type: 'err', text: e.response?.data?.detail || 'Failed to update SLA' })
+    } finally {
+      setSlaLoading(false)
+      setTimeout(() => setSlaMsg(null), 4000)
+    }
   }
 
   // ── Shared styles ─────────────────────────────────────────────────────────
@@ -430,7 +473,7 @@ export default function JobDetail() {
           <span style={{ fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)', fontSize: 12 }}>{id}</span>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="page-title">{job?.product_name || job?.main_product || id}</h1>
+          <h1 className="page-title font-mono text-lg">{jobLabel(job) || job?.product_name || job?.main_product || id}</h1>
           <RiskBadge level={job?.risk_level || job?.max_risk_level} />
           {job?.kev_count > 0 || job?.kev_present ? (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono font-semibold"
@@ -463,7 +506,7 @@ export default function JobDetail() {
           <MetaItem label="Environment" value={job?.environment} />
           <MetaItem label="Assets" value={job?.assets_count ?? job?.affected_asset_count} />
           <MetaItem label="CVEs" value={job?.cve_count} />
-          <MetaItem label="SLA Days" value={job?.sla_days} />
+          <MetaItem label="SLA Days" value={job?.sla_override_days ? `${job.sla_override_days}d (custom)` : job?.sla_days} />
           <MetaItem label="Due Date" value={job?.due_date ? job.due_date.slice(0, 10) : null} />
           {job?.sla_paused_days > 0 && (
             <MetaItem label="SLA Paused Days" value={job.sla_paused_days} />
@@ -472,6 +515,40 @@ export default function JobDetail() {
             <div className="col-span-2 md:col-span-4">
               <div className="mono-label mb-1">Lifecycle Note</div>
               <div className="text-sm" style={{ color: 'var(--text)' }}>{job.lifecycle_note}</div>
+            </div>
+          )}
+          {canWrite && (
+            <div className="col-span-2 md:col-span-4 pt-2 border-t border-[var(--border)]">
+              <div className="mono-label mb-2">Custom SLA Override</div>
+              <form onSubmit={handleSlaOverride} className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="number"
+                  min="1"
+                  max="3650"
+                  placeholder={job?.sla_override_days ? String(job.sla_override_days) : 'Days (e.g. 30)'}
+                  value={slaOverride}
+                  onChange={(e) => setSlaOverride(e.target.value)}
+                  style={{ ...inputStyle, width: 140 }}
+                />
+                <button type="submit" className="btn-amber text-xs px-3 py-1.5" disabled={slaLoading}>
+                  {slaLoading ? 'Saving…' : 'Set SLA'}
+                </button>
+                {job?.sla_override_days && (
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs px-3 py-1.5"
+                    disabled={slaLoading}
+                    onClick={() => { setSlaOverride(''); updateJobSla(id, { sla_override_days: null }).then(r => setJob(r.data?.data ?? r.data)) }}
+                  >
+                    Clear override
+                  </button>
+                )}
+                {slaMsg && (
+                  <span className="text-xs font-mono" style={{ color: slaMsg.type === 'ok' ? 'var(--green)' : 'var(--red)' }}>
+                    {slaMsg.text}
+                  </span>
+                )}
+              </form>
             </div>
           )}
         </div>
@@ -536,47 +613,52 @@ export default function JobDetail() {
         <div className="mono-label mb-4">Lifecycle Controls</div>
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
 
-          {/* Transition buttons */}
+          {/* Transition dropdown */}
           <div>
-            <div className="text-xs mb-3" style={{ color: 'var(--muted)' }}>
+            <div className="text-xs mb-3 flex items-center gap-2" style={{ color: 'var(--muted)' }}>
               Current: <StatusBadge status={job?.status} />
             </div>
             {nextStatuses.length === 0 ? (
               <p className="text-sm" style={{ color: 'var(--muted)' }}>
-                {job?.status === 'CLOSED' ? 'Terminal state — no further transitions.' : 'No transitions available.'}
+                No further transitions available from this state.
               </p>
             ) : (
-              <>
-                <div className="flex flex-wrap gap-2 mb-4">
+              <div className="space-y-2">
+                <select
+                  style={selectStyle}
+                  value={transTarget}
+                  onChange={(e) => { setTransTarget(e.target.value); setTransError(null) }}
+                  disabled={transLoading || !canWrite}
+                >
+                  <option value="">Select next state…</option>
                   {nextStatuses.map((s) => {
                     const restricted = RISK_STATES.has(s) && !canRiskAccept
                     return (
-                      <button
-                        key={s}
-                        className="btn-ghost text-xs"
-                        style={restricted ? { opacity: 0.4, cursor: 'not-allowed' } : {}}
-                        disabled={transLoading || restricted || !canWrite}
-                        title={restricted ? 'Requires risk_owner or admin role' : undefined}
-                        onClick={() => handleTransition(s)}
-                      >
-                        → {s.replace(/_/g, ' ')}
-                      </button>
+                      <option key={s} value={s} disabled={restricted}>
+                        → {s.replace(/_/g, ' ')}{restricted ? '  (requires risk_owner)' : ''}
+                      </option>
                     )
                   })}
-                </div>
-                <div className="space-y-2">
-                  <input style={inputStyle} type="text" placeholder="Comment (optional)"
-                    value={transComment} onChange={(e) => setTransComment(e.target.value)} />
-                  <input style={inputStyle} type="text" placeholder="Lifecycle note (optional)"
-                    value={transNote} onChange={(e) => setTransNote(e.target.value)} />
-                </div>
+                </select>
+                <input style={inputStyle} type="text" placeholder="Comment (optional)"
+                  value={transComment} onChange={(e) => setTransComment(e.target.value)} />
+                <input style={inputStyle} type="text" placeholder="Lifecycle note (optional)"
+                  value={transNote} onChange={(e) => setTransNote(e.target.value)} />
+                <button
+                  className="w-full px-3 py-2 rounded text-xs font-semibold transition disabled:opacity-40"
+                  style={{ background: transTarget ? 'var(--amber)' : 'var(--surface-2)', color: transTarget ? '#000' : 'var(--muted)', border: '1px solid var(--border)' }}
+                  disabled={!transTarget || transLoading || !canWrite}
+                  onClick={() => transTarget && handleTransition(transTarget)}
+                >
+                  {transLoading ? 'Applying…' : transTarget ? `Apply → ${transTarget.replace(/_/g, ' ')}` : 'Apply Transition'}
+                </button>
                 {transError && (
-                  <div className="mt-2 text-xs px-3 py-2 rounded"
+                  <div className="mt-1 text-xs px-3 py-2 rounded"
                     style={{ background: 'rgba(224,82,82,0.1)', color: 'var(--red)', border: '1px solid rgba(224,82,82,0.3)' }}>
                     {transError}
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
 
@@ -598,6 +680,28 @@ export default function JobDetail() {
               placeholder="Comment (optional)" value={triageComment}
               onChange={(e) => setTriageComment(e.target.value)}
               disabled={!canWrite} />
+            {/* RISK_ACCEPTED warning — shown when user tries to submit without rationale */}
+            {showRationaleAlert && triageDecision === 'RISK_ACCEPTED' && (
+              <div
+                className="px-4 py-3 rounded text-sm"
+                style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.4)', color: '#fbbf24' }}
+              >
+                <strong>Risk Acceptance Rationale Required</strong>
+                <p className="mt-1 text-xs" style={{ color: 'var(--text)' }}>
+                  You must record a Risk Acceptance justification before marking this job as
+                  RISK_ACCEPTED. Click <strong>"Record Risk Acceptance"</strong> below, fill in the
+                  justification and compensating controls, then submit triage.
+                </p>
+                <button
+                  type="button"
+                  className="mt-2 text-xs underline"
+                  style={{ color: '#fbbf24', background: 'none', border: 'none', cursor: 'pointer' }}
+                  onClick={() => setShowRationaleAlert(false)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             <button type="submit" className="btn-ghost text-sm"
               disabled={!triageDecision || triageLoading || !canWrite}>
               {triageLoading ? 'Submitting…' : 'Submit Triage'}
@@ -766,6 +870,9 @@ export default function JobDetail() {
           </div>
         )}
       </div>
+
+      {/* Chat with Finding */}
+      <ChatPanel jobId={id} role={role} />
 
       {/* Events Timeline */}
       <Section title="Events Timeline">

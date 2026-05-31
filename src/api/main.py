@@ -19,10 +19,16 @@ async def lifespan(app: FastAPI):
     logger.info("VRA startup: running database migrations…")
     from api.db.connection import get_connection
     from api.db.migrate import run_migrations
+    from api.services.compliance_service import load_control_catalog
 
     conn = get_connection()
     try:
         run_migrations(conn)
+        try:
+            n = load_control_catalog(conn)
+            logger.info("VRA startup: loaded %d compliance controls.", n)
+        except Exception as exc:
+            logger.warning("VRA startup: compliance catalog load failed — %s", exc)
     finally:
         conn.close()
 
@@ -62,8 +68,12 @@ def create_app() -> FastAPI:
         auth as auth_router,
         users as users_router,
         lifecycle as lifecycle_router,
+        threat_alerts as threat_alerts_router,
     )
     from api.routers import rag as rag_router
+    from api.routers import compliance as compliance_router
+    from api.routers import agent as agent_router
+    from api.routers import chat as chat_router
 
     # Auth first so login is always reachable
     app.include_router(auth_router.router)
@@ -75,9 +85,13 @@ def create_app() -> FastAPI:
     app.include_router(rescan.router)
     app.include_router(uploads.router)
     app.include_router(assets.router)
+    app.include_router(threat_alerts_router.router)
     app.include_router(findings.router)
     app.include_router(enrichment.router)
     app.include_router(rag_router.router)
+    app.include_router(compliance_router.router)
+    app.include_router(agent_router.router)
+    app.include_router(chat_router.router)
 
     # ── Health check ──────────────────────────────────────────────────────────
     @app.get("/health", tags=["Health"])
