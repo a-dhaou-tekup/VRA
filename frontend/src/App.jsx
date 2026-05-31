@@ -14,6 +14,9 @@ import ManualFindings from './pages/ManualFindings'
 import Enrichment from './pages/Enrichment'
 import Users from './pages/Users'
 import RiskRegister from './pages/RiskRegister'
+import ThreatAlerts from './pages/ThreatAlerts'
+import Compliance from './pages/Compliance'
+import Findings from './pages/Findings'
 
 export default function App() {
   return (
@@ -42,6 +45,9 @@ export default function App() {
             <Route path="/enrichment" element={<Enrichment />} />
             <Route path="/users" element={<Users />} />
             <Route path="/risk-register" element={<RiskRegister />} />
+            <Route path="/threat-alerts" element={<ThreatAlerts />} />
+            <Route path="/compliance" element={<Compliance />} />
+            <Route path="/findings" element={<Findings />} />
           </Route>
         </Routes>
       </BrowserRouter>

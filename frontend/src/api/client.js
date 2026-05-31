@@ -144,6 +144,13 @@ export const agentChat      = (body) => api.post('/api/agent/chat', body)
 export const agentFeedback  = (body) => api.post('/api/agent/feedback', body)
 export const fetchAgentTools = ()   => api.get('/api/agent/tools')
 
+// ─── Findings + Auto-triage ───────────────────────────────────────────────────
+export const fetchFindings    = (params) => api.get('/api/findings', { params })
+export const triggerAutoTriage = (findingId, force = false) =>
+  api.post(`/api/findings/${findingId}/auto-triage`, null, { params: { force } })
+export const fetchAutoTriage  = (findingId) =>
+  api.get(`/api/findings/${findingId}/auto-triage`)
+
 // ─── Chat-with-Finding ───────────────────────────────────────────────────────
 export const fetchFindingConversations = (jobId) =>
   api.get(`/api/findings/${jobId}/conversations`)

@@ -98,6 +98,7 @@ def update_upload_status(
     status: str,
     stats_json: dict | None = None,
     error_message: str | None = None,
+    parser_used: str | None = None,
 ) -> None:
     params: list = [status]
     set_parts = ["status = ?"]
@@ -108,6 +109,9 @@ def update_upload_status(
     if error_message is not None:
         set_parts.append("error_message = ?")
         params.append(error_message)
+    if parser_used is not None:
+        set_parts.append("parser_used = ?")
+        params.append(parser_used)
 
     params.append(upload_id)
     conn.execute(
@@ -117,7 +121,7 @@ def update_upload_status(
     conn.commit()
 
 
-# ── Auto-detection helper ─────────────────────────────────────────────────────
+# ── Auto-detection helpers ────────────────────────────────────────────────────
 
 def _detect_scanner_type(file_path: Path) -> str:
     """Attempt to detect scanner type from file extension and content."""
@@ -134,6 +138,31 @@ def _detect_scanner_type(file_path: Path) -> str:
             pass
         return "nessus"  # default XML → nessus
     return "csv_generic"
+
+
+def _is_known_scanner_format(file_path: Path) -> bool:
+    """Return True when extension + first-200-byte signature identify a known scanner format.
+
+    When True, the LLM fallback is suppressed even if the structured parser yields 0 findings.
+    Known formats: .nessus files and .xml files bearing a Nessus or OpenVAS root element.
+    """
+    suffix = file_path.suffix.lower()
+    if suffix == ".nessus":
+        return True
+    if suffix == ".xml":
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+                head = fh.read(200)
+            if (
+                "NessusClientData" in head
+                or "nessus" in head.lower()
+                or "openvas" in head.lower()
+                or "gvm" in head.lower()
+            ):
+                return True
+        except Exception:
+            pass
+    return False
 
 
 # ── Background pipeline ───────────────────────────────────────────────────────
@@ -191,7 +220,14 @@ def run_upload_pipeline(
                     logger.warning("upload_pipeline: could not load asset CSV — %s", exc)
 
         update_upload_status(conn, upload_id, "ingesting")
-        df_raw = _parse_file(fpath, effective_scanner, asset_inventory=asset_df)
+        df_raw, parser_used = _parse_file(fpath, effective_scanner, asset_inventory=asset_df)
+
+        # ── Step 2b: persist findings to audit table ─────────────────────────
+        ingest_method = "llm" if parser_used == "llm" else "structured"
+        try:
+            _save_findings_to_db(conn, upload_id, df_raw, ingest_method)
+        except Exception as exc:
+            logger.warning("upload_pipeline: could not save findings rows — %s", exc)
 
         # ── Step 3: merge asset metadata onto findings ───────────────────────
         if asset_df is not None and not asset_df.empty:
@@ -244,20 +280,34 @@ def run_upload_pipeline(
         total_assets  = int(df_scored["asset_id"].nunique()) if "asset_id" in df_scored.columns else 0
 
         stats = {
-            "new_jobs":                new_jobs,
-            "updated_jobs":            updated_jobs,
-            "total_cve_count":         total_cves,
-            "total_asset_count":       total_assets,
-            "scanner_type":            effective_scanner,
+            "new_jobs":         new_jobs,
+            "updated_jobs":     updated_jobs,
+            "total_cve_count":  total_cves,
+            "total_asset_count": total_assets,
+            "scanner_type":     effective_scanner,
+            "parser_used":      parser_used,
         }
 
-        update_upload_status(conn, upload_id, "done", stats_json=stats)
+        update_upload_status(
+            conn, upload_id, "done",
+            stats_json=stats, parser_used=parser_used,
+        )
         logger.info("upload_pipeline: upload %s done — %s", upload_id, stats)
 
     except Exception as exc:
-        logger.error("upload_pipeline: upload %s FAILED — %s", upload_id, exc, exc_info=True)
+        fail_status = "failed"
         try:
-            update_upload_status(conn, upload_id, "failed", error_message=str(exc))
+            from ingestion.adapters.llm_parser import LLMExtractionError
+            if isinstance(exc, LLMExtractionError):
+                fail_status = "llm_extraction_failed"
+        except ImportError:
+            pass
+        logger.error(
+            "upload_pipeline: upload %s %s — %s",
+            upload_id, fail_status.upper(), exc, exc_info=True,
+        )
+        try:
+            update_upload_status(conn, upload_id, fail_status, error_message=str(exc))
         except Exception:
             pass
     finally:
@@ -266,26 +316,108 @@ def run_upload_pipeline(
 
 # ── Internal pipeline helpers ─────────────────────────────────────────────────
 
-def _parse_file(file_path: Path, scanner_type: str, asset_inventory=None):
-    """Parse file using the appropriate adapter. Returns normalised DataFrame."""
+def _parse_file(
+    file_path: Path,
+    scanner_type: str,
+    asset_inventory=None,
+) -> tuple:
+    """Parse the file using the structured parser chain, with LLM as last-resort fallback.
+
+    Parser chain (in order):
+      1. nessus / openvas / csv_generic — matched by scanner_type
+      2. csv_generic — best-effort for unknown scanner_type values
+      3. LLM (llm_parser.LLMParser) — only when:
+           (a) no structured parser matched the extension, OR
+           (b) structured parser returned fewer than LLM_INGEST_TRIGGER_MIN_FINDINGS findings
+         AND the file does NOT have a known scanner signature (see _is_known_scanner_format).
+
+    Returns: (normalised DataFrame, parser_used_name)
+    """
     import pandas as pd
 
-    if scanner_type == "nessus":
-        from ingestion.adapters.nessus import NessusAdapter
-        return NessusAdapter().parse(file_path)
-    if scanner_type == "openvas":
-        from ingestion.adapters.openvas import OpenVASAdapter
-        return OpenVASAdapter().parse(file_path)
-    if scanner_type == "csv_generic":
-        from ingestion.adapters.csv_generic import CSVGenericAdapter
-        return CSVGenericAdapter().parse(file_path, asset_inventory=asset_inventory)
+    min_findings = int(os.getenv("LLM_INGEST_TRIGGER_MIN_FINDINGS", "1"))
+    is_known = _is_known_scanner_format(file_path)
 
-    # Fallback: try CSV generic
+    structured_df: pd.DataFrame | None = None
+    parser_used: str = scanner_type
+    struct_err: str = ""
+
     try:
-        from ingestion.adapters.csv_generic import CSVGenericAdapter
-        return CSVGenericAdapter().parse(file_path, asset_inventory=asset_inventory)
-    except Exception:
-        return pd.read_csv(file_path, dtype=str).fillna("")
+        if scanner_type == "nessus":
+            from ingestion.adapters.nessus import NessusAdapter
+            structured_df = NessusAdapter().parse(file_path)
+        elif scanner_type == "openvas":
+            from ingestion.adapters.openvas import OpenVASAdapter
+            structured_df = OpenVASAdapter().parse(file_path)
+        elif scanner_type == "csv_generic":
+            from ingestion.adapters.csv_generic import CSVGenericAdapter
+            structured_df = CSVGenericAdapter().parse(file_path, asset_inventory=asset_inventory)
+        else:
+            # Unknown scanner type: attempt csv_generic as a best-effort
+            try:
+                from ingestion.adapters.csv_generic import CSVGenericAdapter
+                structured_df = CSVGenericAdapter().parse(file_path, asset_inventory=asset_inventory)
+                parser_used = "csv_generic"
+            except Exception as inner_exc:
+                struct_err = str(inner_exc)
+                logger.warning("_parse_file: csv_generic best-effort failed — %s", inner_exc)
+
+    except Exception as exc:
+        struct_err = str(exc)
+        logger.warning("_parse_file: structured parser '%s' failed — %s", scanner_type, exc)
+        if is_known:
+            raise  # Known scanner format — propagate; do not invoke LLM
+
+    # ── Known-format guard: never invoke LLM for recognised Nessus / OpenVAS files ──
+    if is_known:
+        return (structured_df if structured_df is not None else pd.DataFrame()), parser_used
+
+    # ── LLM fallback check ────────────────────────────────────────────────────────
+    n_found = len(structured_df) if structured_df is not None else 0
+    needs_llm = n_found < min_findings
+
+    if needs_llm:
+        logger.info(
+            "_parse_file: invoking LLM fallback "
+            "(structured='%s' yielded %d findings, threshold=%d%s)",
+            scanner_type, n_found, min_findings,
+            f", error: {struct_err}" if struct_err else "",
+        )
+        from ingestion.adapters.llm_parser import LLMParser
+        llm_df = LLMParser().parse(file_path, asset_inventory=asset_inventory)
+        return llm_df, "llm"
+
+    return structured_df, parser_used
+
+
+def _save_findings_to_db(
+    conn: sqlite3.Connection,
+    upload_id: str,
+    df,
+    ingest_method: str,
+) -> None:
+    """Persist individual findings rows to the findings audit table."""
+    now = datetime.now(timezone.utc).isoformat()
+    rows = []
+    for _, row in df.iterrows():
+        rows.append((
+            str(uuid.uuid4()),
+            upload_id,
+            str(row.get("cve_id", "") or ""),
+            str(row.get("hostname", "") or ""),
+            str(row.get("component", "") or row.get("plugin_family", "") or ""),
+            str(row.get("severity", "") or ""),
+            ingest_method,
+            now,
+        ))
+    if rows:
+        conn.executemany(
+            """INSERT OR IGNORE INTO findings
+               (id, upload_id, cve_id, hostname, component, severity, ingest_method, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+        conn.commit()
 
 
 def _load_assets_from_db(conn):

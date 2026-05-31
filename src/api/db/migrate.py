@@ -273,6 +273,49 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # ── Findings audit table (ingest_method tracking) ────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS findings (
+            id              TEXT PRIMARY KEY,
+            upload_id       TEXT REFERENCES uploads(id),
+            cve_id          TEXT,
+            hostname        TEXT,
+            component       TEXT,
+            severity        TEXT,
+            ingest_method   TEXT NOT NULL DEFAULT 'structured',
+            state           TEXT NOT NULL DEFAULT 'NEW',
+            created_at      TEXT NOT NULL
+        )
+    """)
+
+    # ── Auto-triage agent output ──────────────────────────────────────────────
+    # One row per finding (latest wins via INSERT OR REPLACE).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS auto_triage (
+            finding_id     TEXT PRIMARY KEY REFERENCES findings(id),
+            triage_class   TEXT NOT NULL CHECK (triage_class IN (
+                               'likely_false_positive',
+                               'likely_valid',
+                               'needs_investigation')),
+            confidence     REAL NOT NULL,
+            justification  TEXT NOT NULL,
+            model_version  TEXT NOT NULL,
+            created_at     TEXT NOT NULL
+        )
+    """)
+
+    # ── Finding lifecycle events (audit trail for triage agent) ───────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS finding_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            finding_id  TEXT NOT NULL,
+            event_type  TEXT NOT NULL,
+            actor       TEXT NOT NULL DEFAULT 'system',
+            detail      TEXT,
+            created_at  TEXT NOT NULL
+        )
+    """)
+
     # ── Chat with Finding (feat/chat-with-finding) ────────────────────────────
     conn.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
@@ -344,6 +387,35 @@ def _alter_tables(conn: sqlite3.Connection) -> None:
                 logger.info("migrate: added assets.%s", col_name)
             except sqlite3.OperationalError as exc:
                 logger.warning("migrate: could not add assets.%s — %s", col_name, exc)
+
+    # LLM ingest — parser_used on uploads
+    uploads_patches = [
+        ("parser_used", "TEXT DEFAULT 'structured'"),
+    ]
+    for col_name, col_type in uploads_patches:
+        if not _column_exists(conn, "uploads", col_name):
+            try:
+                conn.execute(f"ALTER TABLE uploads ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+                logger.info("migrate: added uploads.%s", col_name)
+            except sqlite3.OperationalError as exc:
+                logger.warning("migrate: could not add uploads.%s — %s", col_name, exc)
+
+    # LLM ingest + auto-triage — new columns on findings
+    findings_patches = [
+        ("ingest_method", "TEXT NOT NULL DEFAULT 'structured'"),
+        ("state",         "TEXT NOT NULL DEFAULT 'NEW'"),
+    ]
+    for col_name, col_type in findings_patches:
+        try:
+            if not _column_exists(conn, "findings", col_name):
+                conn.execute(
+                    f"ALTER TABLE findings ADD COLUMN {col_name} {col_type}"
+                )
+                conn.commit()
+                logger.info("migrate: added findings.%s", col_name)
+        except sqlite3.OperationalError as exc:
+            logger.warning("migrate: could not patch findings.%s — %s", col_name, exc)
 
     # AI layer extension — new columns on llm_advice
     llm_advice_patches = [

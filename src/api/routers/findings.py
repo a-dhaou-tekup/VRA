@@ -18,10 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
-from api.auth import require_role
+from api.auth import get_current_user, require_role
 from api.db.connection import get_db, DB_PATH
 from api.services.upload_service import (
     UPLOAD_DIR, create_upload_record, run_upload_pipeline,
@@ -30,6 +30,8 @@ from api.services.upload_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/findings", tags=["Findings"])
+
+_WRITERS = ("analyst", "remediation_owner", "admin")
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -153,6 +155,83 @@ def submit_manual_findings(
     record["finding_count"] = len(payload.findings)
 
     return {"data": record}
+
+
+# ── Findings list (with auto_triage join) ─────────────────────────────────────
+
+@router.get("")
+def list_findings(
+    limit:  int = Query(50, ge=1, le=500),
+    offset: int = Query(0,  ge=0),
+    conn:   sqlite3.Connection = Depends(get_db),
+    user:   dict               = Depends(get_current_user),
+):
+    """Return findings with their auto_triage suggestion (LEFT JOIN)."""
+    rows = conn.execute(
+        """SELECT
+               f.id, f.upload_id, f.cve_id, f.hostname, f.component,
+               f.severity, f.ingest_method, f.state, f.created_at,
+               at.triage_class, at.confidence, at.justification,
+               at.model_version, at.created_at AS triage_at
+           FROM findings f
+           LEFT JOIN auto_triage at ON at.finding_id = f.id
+           ORDER BY f.created_at DESC
+           LIMIT ? OFFSET ?""",
+        (limit, offset),
+    ).fetchall()
+
+    total = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+    return {"data": [dict(r) for r in rows], "total": total}
+
+
+# ── Auto-triage endpoints ──────────────────────────────────────────────────────
+
+@router.post("/{finding_id}/auto-triage", status_code=status.HTTP_200_OK)
+def trigger_auto_triage(
+    finding_id: str,
+    force: bool = Query(False, description="Overwrite even if analyst has acted"),
+    conn:  sqlite3.Connection = Depends(get_db),
+    user:  dict               = Depends(require_role("analyst", "admin")),
+):
+    """Run (or re-run) auto-triage for a finding.
+
+    Idempotent — calling multiple times overwrites the previous result.
+    Skips silently if findings.state is not NEW/TRIAGED unless force=true.
+    """
+    from api.services.triage_agent import run_auto_triage
+
+    try:
+        result = run_auto_triage(
+            finding_id, conn,
+            force=force,
+            actor=user["username"],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logger.error("auto-triage failed for %s: %s", finding_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Triage agent error: {exc}")
+
+    return {"data": result}
+
+
+@router.get("/{finding_id}/auto-triage")
+def get_auto_triage(
+    finding_id: str,
+    conn:       sqlite3.Connection = Depends(get_db),
+    user:       dict               = Depends(get_current_user),
+):
+    """Return the current auto-triage suggestion for a finding."""
+    row = conn.execute(
+        "SELECT * FROM auto_triage WHERE finding_id = ?", (finding_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No auto-triage result for finding '{finding_id}'. "
+                   "Run POST /findings/{id}/auto-triage first.",
+        )
+    return {"data": dict(row)}
 
 
 @router.get("/manual/example")

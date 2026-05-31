@@ -37,6 +37,7 @@ const NAV_GROUPS = [
     label: 'Security',
     items: [
       { to: '/assets',        label: 'Assets',        Icon: ServerStackIcon },
+      { to: '/findings',      label: 'Findings',      Icon: ClipboardDocumentCheckIcon },
       { to: '/threat-alerts', label: 'Threat Alerts', Icon: ExclamationTriangleIcon },
       { to: '/risk-register', label: 'Risk Register', Icon: ShieldExclamationIcon },
       { to: '/enrichment',    label: 'Enrichment',    Icon: BoltIcon },
@@ -77,6 +78,7 @@ const PAGE_TITLES = {
   '/compliance':    'Compliance',
   '/upload':        'Upload',
   '/findings/new':  'Manual Entry',
+  '/findings':      'Findings',
   '/users':         'Users',
 }
 
