@@ -57,25 +57,50 @@ CREATE VIRTUAL TABLE IF NOT EXISTS rag_chunks_fts USING fts5(
 
 _CREATE_LOOKUP = """
 CREATE TABLE IF NOT EXISTS rag_chunks_lookup (
-    doc_id   TEXT PRIMARY KEY,
-    text     TEXT NOT NULL
+    doc_id       TEXT PRIMARY KEY,
+    text         TEXT NOT NULL,
+    source_class TEXT NOT NULL DEFAULT 'cve_descriptions'
 );
 """
 
 
 def init_fts_db(conn: Optional[sqlite3.Connection] = None) -> None:
-    """Create FTS5 virtual table and lookup table if they don't exist."""
+    """Create FTS5 virtual table and lookup table if they don't exist.
+
+    Also runs idempotent column migrations for databases created before
+    multi-collection support was added.
+    """
     c = conn or _get_conn()
     c.execute(_CREATE_FTS)
     c.execute(_CREATE_LOOKUP)
     c.commit()
     logger.debug("FTS5 schema ensured.")
+    # Idempotent column migration (safe to call on fresh DBs too)
+    cols = [r[1] for r in c.execute("PRAGMA table_info(rag_chunks_lookup)").fetchall()]
+    if "source_class" not in cols:
+        c.execute(
+            "ALTER TABLE rag_chunks_lookup"
+            " ADD COLUMN source_class TEXT NOT NULL DEFAULT 'cve_descriptions'"
+        )
+        c.commit()
+        logger.info("FTS5: added source_class column (schema migration)")
 
 
 # ── Write helpers ─────────────────────────────────────────────────────────────
 
-def write_chunks(rows: list[tuple[str, str]]) -> int:
+def write_chunks(
+    rows: list[tuple[str, str]],
+    source_class: str = "cve_descriptions",
+) -> int:
     """Bulk insert-or-replace (doc_id, text) pairs into the FTS5 index.
+
+    Parameters
+    ----------
+    rows:
+        List of (doc_id, text) tuples.
+    source_class:
+        Collection the chunks belong to.  Stored in the lookup table so
+        ``bm25_search`` can filter by collection.
 
     Safe to call repeatedly — existing rows are replaced.
     Returns the number of rows written.
@@ -84,19 +109,20 @@ def write_chunks(rows: list[tuple[str, str]]) -> int:
         return 0
 
     conn = _get_conn()
-    # Delete existing entries first to avoid FTS5 duplicate accumulation
     doc_ids = [r[0] for r in rows]
     placeholders = ",".join("?" * len(doc_ids))
+    # Delete existing FTS5 entries to avoid duplicate accumulation
     conn.execute(
         f"DELETE FROM rag_chunks_fts WHERE doc_id IN ({placeholders})", doc_ids
     )
     conn.executemany(
         "INSERT INTO rag_chunks_fts(doc_id, text) VALUES (?, ?)", rows
     )
-    # Keep a plain-text lookup table for easy text fetch by ID
+    # Lookup table stores text + source_class for filtered search
     conn.executemany(
-        "INSERT OR REPLACE INTO rag_chunks_lookup(doc_id, text) VALUES (?, ?)",
-        rows,
+        """INSERT OR REPLACE INTO rag_chunks_lookup(doc_id, text, source_class)
+           VALUES (?, ?, ?)""",
+        [(doc_id, text, source_class) for doc_id, text in rows],
     )
     conn.commit()
     return len(rows)
@@ -153,11 +179,82 @@ def bm25_search(query: str, k: int = 50) -> list[dict]:
     return results
 
 
-def chunk_count() -> int:
-    """Return the number of chunks currently in the FTS5 index."""
+def bm25_search_by_class(
+    query: str,
+    source_class: str,
+    k: int = 50,
+) -> list[dict]:
+    """Run a BM25 search filtered to a specific source_class.
+
+    Returns results whose doc_id is in ``rag_chunks_lookup`` for the
+    given ``source_class``.  Falls back to a global search if the class
+    filter would return nothing (e.g. on an empty collection).
+    """
     conn = _get_conn()
-    row = conn.execute("SELECT COUNT(*) FROM rag_chunks_lookup").fetchone()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM rag_chunks_lookup WHERE source_class = ?",
+        (source_class,),
+    ).fetchone()[0]
+
+    if count == 0:
+        logger.debug("FTS5: no chunks for source_class=%s, skipping", source_class)
+        return []
+
+    safe_query = _escape_fts5(query)
+    try:
+        rows = conn.execute(
+            """
+            SELECT f.doc_id, f.text, bm25(rag_chunks_fts) AS score
+            FROM   rag_chunks_fts f
+            JOIN   rag_chunks_lookup l ON l.doc_id = f.doc_id
+            WHERE  rag_chunks_fts MATCH ?
+              AND  l.source_class = ?
+            ORDER  BY score
+            LIMIT  ?
+            """,
+            (safe_query, source_class, k),
+        ).fetchall()
+    except Exception as exc:
+        logger.warning("FTS5 class query failed (class=%s query=%r): %s",
+                       source_class, safe_query, exc)
+        return []
+
+    results = [{"id": r["doc_id"], "text": r["text"], "score": r["score"]} for r in rows]
+    logger.debug("FTS5[%s] BM25 returned %d results for: %.60s",
+                 source_class, len(results), query)
+    return results
+
+
+def chunk_count(source_class: str | None = None) -> int:
+    """Return the number of chunks in the FTS5 index.
+
+    If *source_class* is given, count only chunks for that collection.
+    """
+    conn = _get_conn()
+    if source_class:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM rag_chunks_lookup WHERE source_class = ?",
+            (source_class,),
+        ).fetchone()
+    else:
+        row = conn.execute("SELECT COUNT(*) FROM rag_chunks_lookup").fetchone()
     return row[0] if row else 0
+
+
+def migrate_lookup_add_source_class() -> None:
+    """Idempotent: add source_class column to existing lookup tables.
+
+    Called by init_fts_db() for databases created before multi-collection
+    support was added.  Safe to call on already-migrated databases.
+    """
+    conn = _get_conn()
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(rag_chunks_lookup)").fetchall()]
+    if "source_class" not in cols:
+        conn.execute(
+            "ALTER TABLE rag_chunks_lookup ADD COLUMN source_class TEXT NOT NULL DEFAULT 'cve_descriptions'"
+        )
+        conn.commit()
+        logger.info("FTS5: added source_class column to rag_chunks_lookup")
 
 
 # ── FTS5 query sanitiser ──────────────────────────────────────────────────────

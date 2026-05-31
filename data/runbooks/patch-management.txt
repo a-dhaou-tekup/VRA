@@ -1,0 +1,40 @@
+INTERNAL RUNBOOK: Patch Management and Vulnerability Remediation
+
+Source-ID: patch-management
+Classification: internal_runbooks
+
+## Overview
+This runbook defines VRA's internal patch management process for all production systems.
+
+## Patch Priority Tiers
+- CRITICAL (CVSS >= 9.0, KEV-listed): Patch within 24 hours. Notify CISO immediately.
+- HIGH (CVSS 7.0-8.9): Patch within 7 days. Schedule maintenance window.
+- MEDIUM (CVSS 4.0-6.9): Patch within 30 days. Bundle with quarterly update cycle.
+- LOW (CVSS < 4.0): Patch within 90 days or at next major release.
+
+## Pre-Patch Checklist
+1. Confirm patch authenticity (verify GPG signature or vendor checksum).
+2. Test patch in staging environment for minimum 2 hours before production.
+3. Take snapshot/backup of affected system.
+4. Notify change management team via ticket.
+5. Schedule maintenance window (minimum 30-minute window for critical patches).
+
+## Patch Application Steps
+1. Apply patch during scheduled window.
+2. Verify service restarts cleanly.
+3. Run automated smoke tests.
+4. Confirm vulnerability is no longer present (re-scan with Nessus/OpenVAS).
+5. Update the VRA job status to PATCHED.
+6. Document in change management system.
+
+## Rollback Procedure
+If patch causes service degradation:
+1. Restore from snapshot immediately.
+2. Open P1 incident ticket.
+3. Notify vendor for emergency support.
+4. Apply compensating controls (network isolation, WAF rule).
+
+## Contacts
+- Patch Coordinator: security-team@example.com
+- Emergency: +1-800-SECURITY (24x7 on-call)
+- Vendor Escalation: See vendor-contacts.txt in this directory.

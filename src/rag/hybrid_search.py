@@ -24,17 +24,54 @@ logger = logging.getLogger(__name__)
 
 RRF_K = 60  # standard constant; do not change without re-evaluation
 
+# ── Provenance helpers ────────────────────────────────────────────────────────
+
+def _infer_source_class(source_file: str) -> str:
+    """Infer collection name from the source file path stored in metadata.
+
+    Heuristic (same logic used in migrate_collections.py):
+      - path contains 'nvd_advisories' or 'cisa_kev_notes' → cve_descriptions
+      - path contains 'vendor_advisories'                   → vendor_advisories
+      - path contains 'runbooks'                            → internal_runbooks
+      - default                                             → cve_descriptions
+    """
+    p = source_file.replace("\\", "/").lower()
+    if "vendor_advisories" in p:
+        return "vendor_advisories"
+    if "runbooks" in p:
+        return "internal_runbooks"
+    return "cve_descriptions"
+
+
+def _infer_source_id(doc_id: str) -> str:
+    """Extract the document-level identifier from a chunk doc_id.
+
+    doc_ids follow the pattern ``{stem}_{chunk_index}``, e.g.
+    ``CVE-2024-3400_0``  →  ``CVE-2024-3400``
+    ``RHSA-2024-1234_2`` →  ``RHSA-2024-1234``
+    ``postgres-upgrade_1`` → ``postgres-upgrade``
+
+    If the pattern doesn't match, return the full doc_id.
+    """
+    # Strip trailing ``_N`` suffix
+    parts = doc_id.rsplit("_", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0]
+    return doc_id
+
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
 class RetrievedDoc(TypedDict):
     """A single document retrieved (and optionally re-ranked) from the corpus."""
 
-    id:        str    # ChromaDB / FTS5 document ID, e.g. "CVE-2024-3400_0"
-    text:      str    # chunk text
-    metadata:  dict   # ChromaDB metadata (source_file, chunk_index, …)
-    distance:  float  # vector distance; 0.0 for BM25-only results
-    rrf_score: float  # Reciprocal Rank Fusion score (higher = more relevant)
+    id:           str    # ChromaDB / FTS5 document ID, e.g. "CVE-2024-3400_0"
+    text:         str    # chunk text
+    metadata:     dict   # ChromaDB metadata (source_file, chunk_index, …)
+    distance:     float  # vector distance; 0.0 for BM25-only results
+    rrf_score:    float  # Reciprocal Rank Fusion score (higher = more relevant)
+    source_class: str    # collection name: "cve_descriptions" | "vendor_advisories" | "internal_runbooks"
+    source_id:    str    # document-level identifier: CVE ID, advisory ID, runbook slug
 
 
 # ── RRF core ─────────────────────────────────────────────────────────────────
@@ -134,12 +171,19 @@ def hybrid_search(query: str, k: int = 50) -> list[RetrievedDoc]:
         if doc_id not in doc_store:
             continue
         d = doc_store[doc_id]
+        meta = d["metadata"]
+        # Populate provenance fields from metadata when present;
+        # fall back to inference from the doc_id for legacy single-collection docs.
+        sc = meta.get("source_class") or _infer_source_class(meta.get("source_file", ""))
+        si = meta.get("source_id") or _infer_source_id(doc_id)
         merged.append(RetrievedDoc(
             id=doc_id,
             text=d["text"],
-            metadata=d["metadata"],
+            metadata=meta,
             distance=d["distance"],
             rrf_score=score,
+            source_class=sc,
+            source_id=si,
         ))
 
     logger.info(

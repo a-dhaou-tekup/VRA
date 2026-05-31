@@ -53,7 +53,10 @@ def build_prompt(job: dict, chunks: list[dict]) -> tuple[str, str]:
         "You provide specific, actionable, technically accurate remediation guidance.\n"
         "You MUST respond with valid JSON only. Do not include markdown fences.\n"
         "Never invent CVE IDs, CVSS scores, or patch versions — only use information from the context provided.\n"
-        'If information is insufficient, set "confidence" to a low value and note this in "summary".'
+        'If information is insufficient, set "confidence" to a low value and note this in "summary".\n'
+        "When referencing a specific advisory or runbook from the context, cite it inline as "
+        "[source_class:source_id] — for example [cve_descriptions:CVE-2024-3400] or "
+        "[internal_runbooks:patch-management]. Only cite sources that appear in the context."
     )
 
     # Normalise cve_list to a Python list
@@ -77,13 +80,20 @@ def build_prompt(job: dict, chunks: list[dict]) -> tuple[str, str]:
         f"Affected Assets: {job.get('affected_asset_count', 'N/A')}",
     ]
 
-    context_lines = [f"[{i}] {chunk['text']}" for i, chunk in enumerate(chunks, start=1)]
+    # Format each chunk with its provenance citation tag so the LLM can cite it
+    context_lines = []
+    for i, chunk in enumerate(chunks, start=1):
+        meta  = chunk.get("metadata", {})
+        sc    = meta.get("source_class", "")
+        si    = meta.get("source_id", "")
+        tag   = f"[{sc}:{si}]" if sc and si else ""
+        context_lines.append(f"[{i}]{tag} {chunk['text']}")
 
     schema_example = json.dumps(
         {
-            "summary": "string — 2-3 sentence plain-language summary",
+            "summary": "string — 2-3 sentence plain-language summary with inline [source_class:source_id] citations",
             "exploitation_likelihood": "high|medium|low",
-            "remediation_steps": ["string", "..."],
+            "remediation_steps": ["string — cite sources inline as [source_class:source_id]", "..."],
             "compensating_controls": ["string", "..."],
             "verification": "string — how to confirm the fix was applied",
             "references": ["CVE-XXXX-XXXXX", "vendor URL", "..."],
@@ -216,8 +226,25 @@ def generate_recommendation(job: dict) -> dict:
             hybrid_query, job.get("job_id", "?"),
         )
 
-        candidates = hybrid_search(hybrid_query, k=50)
-        reranked   = rerank(hybrid_query, candidates, top_n=5)
+        use_multi: bool = config.get("RAG_USE_MULTI_COLLECTION", True)
+
+        if use_multi:
+            # ── Multi-collection path: fan out across 3 collections ──────────
+            from rag.multi_collection import multi_collection_search
+            candidates = multi_collection_search(hybrid_query, k=50)
+            logger.info(
+                "finding.advise [multi_collection] candidates=%d  job=%s",
+                len(candidates), job.get("job_id", "?"),
+            )
+        else:
+            # ── Single-collection fallback ────────────────────────────────────
+            candidates = hybrid_search(hybrid_query, k=50)
+            logger.info(
+                "finding.advise [hybrid_single] candidates=%d  job=%s",
+                len(candidates), job.get("job_id", "?"),
+            )
+
+        reranked = rerank(hybrid_query, candidates, top_n=5)
 
         # Convert RetrievedDoc → the plain-dict shape the rest of the pipeline expects
         chunks = [
@@ -245,6 +272,9 @@ def generate_recommendation(job: dict) -> dict:
         )
         chunks = chunks[:3]
 
+    # Build structured citations from the final chunks before the LLM call
+    citations: list[dict] = _build_citations(chunks)
+
     system_prompt, user_message = build_prompt(job, chunks)
     response_text, prompt_tokens, response_tokens, latency_ms = call_ollama(
         system_prompt, user_message, config
@@ -268,12 +298,41 @@ def generate_recommendation(job: dict) -> dict:
     for key, default in _EMPTY_RECOMMENDATION.items():
         recommendation.setdefault(key, default)
 
+    recommendation["citations"] = citations
     recommendation["_meta"] = {
-        "model": config["model"],
-        "prompt_tokens": prompt_tokens,
+        "model":           config["model"],
+        "prompt_tokens":   prompt_tokens,
         "response_tokens": response_tokens,
-        "latency_ms": latency_ms,
-        "chunks_used": len(chunks),
+        "latency_ms":      latency_ms,
+        "chunks_used":     len(chunks),
     }
 
     return recommendation
+
+
+# ── Citation helpers ──────────────────────────────────────────────────────────
+
+def _build_citations(chunks: list[dict]) -> list[dict]:
+    """Extract structured citation objects from the chunks used in the prompt.
+
+    Returns a list of ``{source_class, source_id, snippet}`` dicts suitable
+    for display in the frontend.  Deduplicates by (source_class, source_id).
+    """
+    seen: set[tuple[str, str]] = set()
+    citations: list[dict] = []
+    for chunk in chunks:
+        meta = chunk.get("metadata", {})
+        sc   = meta.get("source_class", "")
+        si   = meta.get("source_id", "")
+        if not sc or not si:
+            continue
+        key = (sc, si)
+        if key in seen:
+            continue
+        seen.add(key)
+        citations.append({
+            "source_class": sc,
+            "source_id":    si,
+            "snippet":      chunk["text"][:200].strip(),
+        })
+    return citations
