@@ -88,6 +88,18 @@ export default function Metrics() {
     ? Object.keys(timelineDays[0]).filter((k) => k !== 'date' && k !== 'day')
     : []
 
+  // ── Security Posture KPIs (from overview data) ──────────────────────────────
+  const kpiStrip = [
+    { label: 'Total Jobs',     value: overview?.total_jobs       ?? '—', accent: 'var(--amber)' },
+    { label: 'Critical Open',  value: overview?.critical_open    ?? '—', accent: 'var(--red)'   },
+    { label: 'High Open',      value: overview?.high_open        ?? '—', accent: 'var(--amber)' },
+    { label: 'KEV-Flagged',    value: overview?.kev_jobs_count   ?? '—', accent: '#ff6b35'      },
+    { label: 'Overdue',        value: overview?.overdue_count    ?? '—', accent: 'var(--red)'   },
+    { label: 'SLA Compliance', value: overview ? `${(overview.sla_compliance_pct ?? 0).toFixed(1)}%` : '—',
+      accent: (overview?.sla_compliance_pct ?? 0) > 90 ? 'var(--green)'
+            : (overview?.sla_compliance_pct ?? 0) > 70 ? 'var(--amber)' : 'var(--red)' },
+  ]
+
   return (
     <div className="p-8 space-y-8">
       {/* Header */}
@@ -96,6 +108,19 @@ export default function Metrics() {
         <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
           SLA compliance, risk trends, and operational metrics
         </p>
+      </div>
+
+      {/* Security posture KPI strip */}
+      <div className="grid grid-cols-3 gap-3 md:grid-cols-6">
+        {kpiStrip.map(({ label, value, accent }) => (
+          <div key={label} className="vra-card py-4 text-center"
+            style={{ borderTop: `2px solid ${accent}` }}>
+            <div className="mono-label mb-2">{label}</div>
+            <div className="text-2xl font-bold font-syne" style={{ color: accent, letterSpacing: '-0.02em' }}>
+              {value}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* SLA Compliance Card */}

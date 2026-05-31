@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchRiskRegister, updateRiskAcceptance } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import { jobLabel } from '../utils/jobLabel'
+import { useSortable, SortTh } from '../utils/sortable'
 
 function Spinner() {
   return (
@@ -35,6 +37,9 @@ export default function RiskRegister() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [actioning, setActioning] = useState(null)
+
+  const { sorted: sortedRows, col: rrSortCol, dir: rrSortDir, toggle: toggleRrSort } =
+    useSortable(rows, 'job_id')
   const navigate = useNavigate()
   const { role } = useAuth()
   const canManage = role === 'risk_owner' || role === 'admin'
@@ -95,25 +100,32 @@ export default function RiskRegister() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
-                  {['Job', 'Product', 'Risk', 'Job Status', 'Accepted By', 'Justification',
-                    'Controls', 'Expiry', 'Status', canManage ? 'Actions' : ''].filter(Boolean).map((h) => (
-                    <th key={h} className="text-left py-3 px-4 mono-label">{h}</th>
+                  {[['job_id','Job'],['main_product','Product'],['max_risk_level','Risk'],
+                    ['job_status','Job Status'],['accepted_by','Accepted By'],
+                    ['justification','Justification'],['compensating_controls','Controls'],
+                    ['expiry_date','Expiry'],['status','Status']].map(([c,h]) => (
+                    <SortTh key={c} col={c} sortCol={rrSortCol} sortDir={rrSortDir} onSort={toggleRrSort}
+                      className="text-left py-3 px-4 mono-label"
+                      style={{ color: rrSortCol === c ? 'var(--amber)' : undefined }}>{h}</SortTh>
                   ))}
+                  {canManage && <th className="text-left py-3 px-4 mono-label">Actions</th>}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((ra) => (
+                {sortedRows.map((ra) => (
                   <tr key={ra.id}
                     style={{ borderBottom: '1px solid var(--border)' }}
                     className="hover:bg-[var(--surface-2)] transition-colors">
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 min-w-[220px]">
                       <span
-                        className="font-mono text-xs cursor-pointer hover:underline"
+                        className="font-mono text-xs cursor-pointer hover:underline block leading-snug"
                         style={{ color: 'var(--amber)' }}
                         onClick={() => navigate(`/jobs/${ra.job_id}`)}
+                        title={ra.job_id}
                       >
-                        {ra.job_id?.slice(0, 8)}…
+                        {jobLabel(ra)}
                       </span>
+                      <span className="text-[10px] text-[var(--muted)] font-mono">{ra.job_id.slice(0, 8)}…</span>
                     </td>
                     <td className="py-3 px-4 text-sm" style={{ color: 'var(--text)' }}>
                       {ra.main_product || '—'}

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchFindings, triggerAutoTriage } from '../api/client'
+import { useSortable, SortTh } from '../utils/sortable'
 
 // ── Triage pill styling ───────────────────────────────────────────────────────
 
@@ -145,6 +146,9 @@ export default function Findings() {
   const [fpThreshold,  setFpThreshold] = useState(null)  // null = filter off
   const [running,      setRunning]     = useState({})    // findingId → bool
 
+  const { sorted: colSorted, col: sortCol, dir: sortDir, toggle: toggleSort } =
+    useSortable(findings, 'created_at', 'desc')
+
   const load = useCallback(() => {
     setLoading(true)
     fetchFindings({ limit: 200, offset: 0 })
@@ -170,8 +174,8 @@ export default function Findings() {
     }
   }
 
-  // Sort
-  const sorted = [...findings].sort((a, b) => {
+  // AI-level sort (on top of column sort)
+  const sorted = [...colSorted].sort((a, b) => {
     if (sort === 'ai_valid') {
       const av = a.triage_class === 'likely_valid' ? (a.confidence ?? 0) : -1
       const bv = b.triage_class === 'likely_valid' ? (b.confidence ?? 0) : -1
@@ -301,18 +305,26 @@ export default function Findings() {
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 {[
-                  'CVE ID', 'Host', 'Component', 'Severity',
-                  'AI Suggestion', 'Method', 'State', '',
-                ].map(h => (
-                  <th key={h} style={{
-                    textAlign: 'left', padding: '10px 16px',
-                    fontFamily: '"IBM Plex Mono", monospace', fontSize: 9,
-                    letterSpacing: '0.12em', textTransform: 'uppercase',
-                    color: 'var(--muted)', fontWeight: 500, whiteSpace: 'nowrap',
-                  }}>
-                    {h}
-                  </th>
-                ))}
+                  { col: 'cve_id',       label: 'CVE ID'       },
+                  { col: 'hostname',     label: 'Host'         },
+                  { col: 'component',    label: 'Component'    },
+                  { col: 'severity',     label: 'Severity'     },
+                  { col: 'triage_class', label: 'AI Suggestion'},
+                  { col: 'ingest_method',label: 'Method'       },
+                  { col: 'state',        label: 'State'        },
+                  { col: null,           label: ''             },
+                ].map(({ col: c, label }) =>
+                  c ? (
+                    <SortTh key={c} col={c} sortCol={sortCol} sortDir={sortDir} onSort={toggleSort}
+                      style={{ padding: '10px 16px', fontFamily: '"IBM Plex Mono", monospace',
+                               fontSize: 9, letterSpacing: '0.12em', color: sortCol === c ? 'var(--amber)' : 'var(--muted)',
+                               fontWeight: 500 }}>
+                      {label}
+                    </SortTh>
+                  ) : (
+                    <th key="actions" style={{ padding: '10px 16px', width: 90 }} />
+                  )
+                )}
               </tr>
             </thead>
             <tbody>

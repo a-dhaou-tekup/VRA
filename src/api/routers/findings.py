@@ -166,21 +166,37 @@ def list_findings(
     conn:   sqlite3.Connection = Depends(get_db),
     user:   dict               = Depends(get_current_user),
 ):
-    """Return findings with their auto_triage suggestion (LEFT JOIN)."""
-    rows = conn.execute(
-        """SELECT
-               f.id, f.upload_id, f.cve_id, f.hostname, f.component,
-               f.severity, f.ingest_method, f.state, f.created_at,
-               at.triage_class, at.confidence, at.justification,
-               at.model_version, at.created_at AS triage_at
-           FROM findings f
-           LEFT JOIN auto_triage at ON at.finding_id = f.id
-           ORDER BY f.created_at DESC
-           LIMIT ? OFFSET ?""",
-        (limit, offset),
-    ).fetchall()
+    """Return findings with their auto_triage suggestion (LEFT JOIN).
 
-    total = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+    Falls back gracefully when the auto_triage table does not yet exist
+    (e.g. before the server has been restarted after a schema migration).
+    """
+    import sqlite3 as _sq
+    try:
+        rows = conn.execute(
+            """SELECT
+                   f.id, f.upload_id, f.cve_id, f.hostname, f.component,
+                   f.severity, f.ingest_method,
+                   COALESCE(f.state, 'NEW') AS state,
+                   f.created_at,
+                   atr.triage_class, atr.confidence, atr.justification,
+                   atr.model_version, atr.created_at AS triage_at
+               FROM findings f
+               LEFT JOIN auto_triage atr ON atr.finding_id = f.id
+               ORDER BY f.created_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+    except _sq.OperationalError as exc:
+        err = str(exc).lower()
+        if "no such table" in err or "no such column" in err:
+            # Tables created by migration — restart the API server to apply them.
+            logger.warning("list_findings: schema not ready (%s). Returning empty list.", exc)
+            return {"data": [], "total": 0,
+                    "warning": "Run migrations by restarting the server, then retry."}
+        raise
+
     return {"data": [dict(r) for r in rows], "total": total}
 
 

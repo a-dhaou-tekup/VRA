@@ -4,6 +4,7 @@ import { fetchJobs, updateJobStatus } from '../api/client'
 import RiskBadge from '../components/RiskBadge'
 import StatusBadge from '../components/StatusBadge'
 import { jobLabel } from '../utils/jobLabel'
+import { useSortable, SortTh } from '../utils/sortable'
 
 const STATUS_OPTIONS = ['', 'TO_DO', 'IN_PROGRESS', 'DONE', 'CLOSED', 'RESURFACED']
 const RISK_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']
@@ -38,6 +39,9 @@ export default function JobsList() {
   const [filters, setFilters] = useState({ status: '', risk_level: '', kev_only: false })
   const [offset, setOffset] = useState(0)
   const LIMIT = 50
+
+  const { sorted: sortedJobs, col: jobSortCol, dir: jobSortDir, toggle: toggleJobSort } =
+    useSortable(jobs, 'created_at', 'desc')
 
   const load = useCallback(() => {
     setLoading(true)
@@ -138,13 +142,18 @@ export default function JobsList() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
-                  {['Job ID', 'Product', 'Assets', 'Risk Level', 'KEV', 'Status', 'Due Date', 'Days Left', 'Actions'].map((h) => (
-                    <th key={h} className="text-left py-3 px-4 mono-label">{h}</th>
+                  {[['job_id','Job ID'],['main_product','Product'],['affected_asset_count','Assets'],
+                    ['max_risk_level','Risk Level'],['kev_present','KEV'],['status','Status'],
+                    ['due_date','Due Date'],['sla_days','Days Left']].map(([c,h]) => (
+                    <SortTh key={c} col={c} sortCol={jobSortCol} sortDir={jobSortDir} onSort={toggleJobSort}
+                      className="text-left py-3 px-4 mono-label"
+                      style={{ color: jobSortCol === c ? 'var(--amber)' : undefined }}>{h}</SortTh>
                   ))}
+                  <th className="text-left py-3 px-4 mono-label">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {jobs.map((job) => (
+                {sortedJobs.map((job) => (
                   <tr
                     key={job.job_id}
                     style={{ borderBottom: '1px solid var(--border)' }}
