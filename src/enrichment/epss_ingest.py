@@ -40,16 +40,6 @@ def _needs_update(conn: sqlite3.Connection, cve_id: str) -> bool:
         return datetime.now(timezone.utc) - cached > timedelta(days=TTL_DAYS)
     except Exception:
         return True
-    row = conn.execute(
-        "SELECT epss_cached_at FROM cve_context WHERE cve_id=?", (cve_id,)
-    ).fetchone()
-    if row is None or not row["epss_cached_at"]:
-        return True
-    try:
-        cached = datetime.fromisoformat(row["epss_cached_at"])
-        return datetime.now(timezone.utc) - cached > timedelta(days=TTL_DAYS)
-    except Exception:
-        return True
 
 
 def fetch_epss_batch(cve_ids: list[str]) -> dict[str, tuple[float, float]]:
@@ -74,13 +64,20 @@ def fetch_epss_batch(cve_ids: list[str]) -> dict[str, tuple[float, float]]:
         return {}
 
 
-def enrich_epss(cve_ids: Iterable[str]) -> int:
+def enrich_epss(cve_ids: Iterable[str], force: bool = False) -> int:
+    """Fetch EPSS scores for the supplied CVE IDs.
+
+    Args:
+        cve_ids: Iterable of CVE-YYYY-NNNNN strings.
+        force:   When True, bypass the 30-day TTL and always re-fetch from
+                 the FIRST API. Use this for manual refresh requests.
+    """
     conn = _get_conn()
     unique = list(set(cve_ids))
-    stale = [c for c in unique if _needs_update(conn, c)]
+    stale = unique if force else [c for c in unique if _needs_update(conn, c)]
 
     if not stale:
-        logger.info("EPSS: all %d CVEs are fresh.", len(unique))
+        logger.info("EPSS: all %d CVEs are fresh (force=%s).", len(unique), force)
         conn.close()
         return 0
 
@@ -110,6 +107,23 @@ def enrich_epss(cve_ids: Iterable[str]) -> int:
                 """, (cve_id, score, percentile, now))
                 updated += 1
         time.sleep(0.2)  # be polite to the FIRST API
+
+    # Write last_attempted timestamp so the UI shows a date even when
+    # FIRST API returns no data for unknown/future CVE IDs.
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS epss_meta (key TEXT PRIMARY KEY, value TEXT)
+        """)
+        conn.execute(
+            "INSERT OR REPLACE INTO epss_meta (key, value) VALUES ('last_attempted', ?)", (now,)
+        )
+        if updated > 0:
+            conn.execute(
+                "INSERT OR REPLACE INTO epss_meta (key, value) VALUES ('last_fetched', ?)", (now,)
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.debug("Could not write epss_meta: %s", exc)
 
     logger.info("EPSS: updated %d CVEs.", updated)
     conn.close()

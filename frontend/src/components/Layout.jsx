@@ -28,7 +28,7 @@ const NAV_GROUPS = [
     label: 'Main',
     items: [
       { to: '/',        label: 'Overview',  Icon: HomeIcon,                   end: true },
-      { to: '/jobs',    label: 'Jobs',      Icon: ClipboardDocumentListIcon },
+      { to: '/jobs',    label: 'Remediation Jobs', Icon: ClipboardDocumentListIcon },
       { to: '/metrics', label: 'Metrics',   Icon: ChartBarIcon },
       { to: '/tickets', label: 'Tickets',   Icon: TicketIcon },
     ],
@@ -68,7 +68,7 @@ const ROLE_COLORS = {
 // Map route → page title for topbar
 const PAGE_TITLES = {
   '/':              'Overview',
-  '/jobs':          'Jobs',
+  '/jobs':          'Remediation Jobs',
   '/metrics':       'Metrics',
   '/tickets':       'Tickets',
   '/assets':        'Assets',

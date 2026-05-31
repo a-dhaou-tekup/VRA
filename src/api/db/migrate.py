@@ -288,6 +288,34 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # ── Service graph (Prompt #8) ─────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS services (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            owner_id    TEXT,
+            description TEXT,
+            created_at  TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS asset_services (
+            asset_id    TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+            service_id  TEXT NOT NULL REFERENCES services(id)    ON DELETE CASCADE,
+            PRIMARY KEY (asset_id, service_id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS service_dependencies (
+            parent_service_id  TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+            child_service_id   TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+            dep_type           TEXT DEFAULT 'depends_on',
+            PRIMARY KEY (parent_service_id, child_service_id)
+        )
+    """)
+
     # ── Auto-triage agent output ──────────────────────────────────────────────
     # One row per finding (latest wins via INSERT OR REPLACE).
     conn.execute("""

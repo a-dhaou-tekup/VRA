@@ -151,6 +151,14 @@ export const triggerAutoTriage = (findingId, force = false) =>
 export const fetchAutoTriage  = (findingId) =>
   api.get(`/api/findings/${findingId}/auto-triage`)
 
+// ─── Graph (blast radius + similarity) ────────────────────────────────────────
+export const fetchBlastRadius    = (findingId, depth = 2) =>
+  api.get(`/api/findings/${findingId}/blast-radius`, { params: { depth } })
+export const fetchSimilarFindings = (findingId, k = 10) =>
+  api.get(`/api/findings/${findingId}/similar`, { params: { k } })
+export const refreshGraph = () =>
+  api.post('/api/graph/refresh')
+
 // ─── Chat-with-Finding ───────────────────────────────────────────────────────
 export const fetchFindingConversations = (jobId) =>
   api.get(`/api/findings/${jobId}/conversations`)

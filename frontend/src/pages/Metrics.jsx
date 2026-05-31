@@ -49,9 +49,14 @@ export default function Metrics() {
   useEffect(() => {
     Promise.all([fetchMetricsSLA(), fetchMetricsTimeline(), fetchMetricsOverview()])
       .then(([slaRes, timelineRes, overviewRes]) => {
-        setSla(slaRes.data)
-        setTimeline(timelineRes.data)
-        setOverview(overviewRes.data)
+        setSla(slaRes.data.data)
+        // Timeline arrives as {date: {RISK: n, …}} — normalise to sorted array
+        const raw = timelineRes.data.data ?? {}
+        const days = Object.entries(raw)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, counts]) => ({ date, ...counts }))
+        setTimeline(days)
+        setOverview(overviewRes.data.data)
       })
       .catch((e) => setError(e.message || 'Failed to load metrics'))
       .finally(() => setLoading(false))
@@ -70,10 +75,10 @@ export default function Metrics() {
   const complianceClass = compliance > 90 ? 'var(--green)' : compliance > 70 ? 'var(--amber)' : 'var(--red)'
 
   const overdueJobs = sla?.overdue_jobs ?? []
-  const timelineDays = timeline?.days ?? timeline ?? []
+  const timelineDays = timeline ?? []
 
   // Build risk dist pie data from overview
-  const riskDist = overview?.risk_distribution ?? {}
+  const riskDist = overview?.jobs_by_risk_level ?? {}
   const pieData = Object.entries(riskDist)
     .filter(([, v]) => v > 0)
     .map(([name, value]) => ({ name, value }))
@@ -138,7 +143,7 @@ export default function Metrics() {
       </div>
 
       {/* Timeline chart */}
-      <Section title="Jobs Created — Last 30 Days">
+      <Section title="Remediation Jobs Created — Last 30 Days">
         {timelineDays.length === 0 ? (
           <div className="text-center py-8 text-sm" style={{ color: 'var(--muted)' }}>No timeline data</div>
         ) : (
@@ -165,7 +170,7 @@ export default function Metrics() {
       </Section>
 
       {/* Overdue jobs table */}
-      <Section title={`Overdue Jobs (${overdueJobs.length})`}>
+      <Section title={`Overdue Remediation Jobs (${overdueJobs.length})`}>
         {overdueJobs.length === 0 ? (
           <div className="text-center py-8" style={{ color: 'var(--green)' }}>
             <div className="text-3xl mb-2">✅</div>

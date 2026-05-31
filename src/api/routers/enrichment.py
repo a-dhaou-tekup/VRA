@@ -100,6 +100,17 @@ def enrichment_status(user: dict = Depends(get_current_user)):
             "SELECT MAX(epss_cached_at) AS m FROM cve_context"
         ).fetchone()
         epss_last = epss_last_row["m"] if epss_last_row else None
+        # Fall back to last_attempted so the UI shows a date after any refresh attempt
+        if not epss_last:
+            try:
+                meta_row = conn.execute(
+                    "SELECT value FROM epss_meta WHERE key IN ('last_fetched','last_attempted') "
+                    "ORDER BY value DESC LIMIT 1"
+                ).fetchone()
+                if meta_row:
+                    epss_last = meta_row["value"]
+            except Exception:
+                pass
 
         nvd_last_row = conn.execute(
             "SELECT MAX(nvd_cached_at) AS m FROM cve_context"
@@ -151,7 +162,7 @@ def refresh_kev(
     def _run():
         try:
             from enrichment.kev_ingest import fetch_and_cache_kev
-            count = fetch_and_cache_kev()
+            count = fetch_and_cache_kev(force=True)   # always fetch when triggered from UI
             logger.info("KEV refresh complete: %d entries.", count)
         except Exception as exc:
             logger.error("KEV refresh failed: %s", exc, exc_info=True)
@@ -166,19 +177,22 @@ def refresh_epss(
     background_tasks: BackgroundTasks,
     user:             dict = Depends(require_role("admin")),
 ):
-    """Refresh EPSS scores for given CVE list (or all CVEs we already know about)."""
+    """Refresh EPSS scores for given CVE list (or all CVEs we already know about).
+
+    Always bypasses the 30-day TTL when called from this endpoint — the analyst
+    explicitly requested a refresh.
+    """
     cve_ids = payload.cve_ids or _all_known_cve_ids(limit=payload.limit)
 
     if not cve_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No CVEs to refresh. Provide cve_ids or run a scan first.",
-        )
+        # Nothing to refresh yet — succeed silently rather than erroring
+        return {"data": {"queued": False, "source": "FIRST EPSS", "cve_count": 0,
+                         "message": "No CVEs known yet; upload a scan first."}}
 
     def _run():
         try:
             from enrichment.epss_ingest import enrich_epss
-            n = enrich_epss(cve_ids)
+            n = enrich_epss(cve_ids, force=True)
             logger.info("EPSS refresh complete: %d CVEs updated.", n)
         except Exception as exc:
             logger.error("EPSS refresh failed: %s", exc, exc_info=True)
@@ -193,28 +207,111 @@ def refresh_nvd(
     background_tasks: BackgroundTasks,
     user:             dict = Depends(require_role("admin")),
 ):
-    """Refresh NVD descriptions / CWEs. Rate-limited; cap with `limit` (default 50)."""
-    limit = payload.limit or 50
+    """Refresh NVD descriptions / CWEs. Rate-limited; cap with `limit` (default 50).
+
+    Always bypasses the 90-day TTL when called from this endpoint.
+    """
+    limit   = payload.limit or 50
     cve_ids = payload.cve_ids or _all_known_cve_ids(limit=limit)
 
     if not cve_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No CVEs to refresh.",
-        )
+        return {"data": {"queued": False, "source": "NVD API v2", "cve_count": 0,
+                         "message": "No CVEs known yet; upload a scan first."}}
 
     cve_ids = cve_ids[:limit]
 
     def _run():
         try:
             from enrichment.nvd_ingest import enrich_nvd
-            n = enrich_nvd(cve_ids)
+            n = enrich_nvd(cve_ids, force=True)
             logger.info("NVD refresh complete: %d CVEs updated.", n)
         except Exception as exc:
             logger.error("NVD refresh failed: %s", exc, exc_info=True)
 
     background_tasks.add_task(_run)
     return {"data": {"queued": True, "source": "NVD API v2", "cve_count": len(cve_ids)}}
+
+
+@router.get("/catalog")
+def browse_catalog(
+    search:   Optional[str] = None,
+    vendor:   Optional[str] = None,
+    kev_only: bool          = True,
+    sort_by:  str           = "kev_added_date",
+    order:    str           = "desc",
+    limit:    int           = 50,
+    offset:   int           = 0,
+    user:     dict          = Depends(get_current_user),
+):
+    """Browse the enrichment catalog with search + filters."""
+    if not ENRICHMENT_DB.exists():
+        return {"data": [], "total": 0}
+
+    VALID_SORT  = {"kev_added_date", "epss_score", "epss_percentile", "cve_id", "kev_vendor"}
+    VALID_ORDER = {"asc", "desc"}
+    sort_col = sort_by if sort_by in VALID_SORT else "kev_added_date"
+    direction = "DESC" if order.lower() == "desc" else "ASC"
+
+    conn = _enrichment_conn()
+    try:
+        clauses = []
+        params: list = []
+
+        if kev_only:
+            clauses.append("kev_flag = 1")
+
+        if vendor:
+            clauses.append("LOWER(kev_vendor) = LOWER(?)")
+            params.append(vendor)
+
+        if search:
+            s = f"%{search}%"
+            clauses.append(
+                "(cve_id LIKE ? OR LOWER(kev_vendor) LIKE LOWER(?) "
+                "OR LOWER(kev_product) LIKE LOWER(?) "
+                "OR LOWER(kev_short_description) LIKE LOWER(?))"
+            )
+            params.extend([s, s, s, s])
+
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM cve_context {where}", params
+        ).fetchone()[0]
+
+        rows = conn.execute(
+            f"""SELECT cve_id, kev_flag, kev_added_date, kev_vendor, kev_product,
+                       kev_required_action, kev_short_description,
+                       epss_score, epss_percentile, nvd_cwe, nvd_description
+                FROM cve_context {where}
+                ORDER BY
+                  CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END,
+                  {sort_col} {direction}
+                LIMIT ? OFFSET ?""",
+            [*params, limit, offset],
+        ).fetchall()
+
+        return {"data": [dict(r) for r in rows], "total": total}
+    finally:
+        conn.close()
+
+
+@router.get("/vendors")
+def list_vendors(user: dict = Depends(get_current_user)):
+    """Return distinct KEV vendors (for filter dropdown)."""
+    if not ENRICHMENT_DB.exists():
+        return {"data": []}
+    conn = _enrichment_conn()
+    try:
+        rows = conn.execute(
+            """SELECT kev_vendor, COUNT(*) AS cnt
+               FROM cve_context
+               WHERE kev_flag=1 AND kev_vendor IS NOT NULL AND kev_vendor != ''
+               GROUP BY kev_vendor ORDER BY cnt DESC"""
+        ).fetchall()
+        return {"data": [{"vendor": r["kev_vendor"], "count": r["cnt"]} for r in rows]}
+    finally:
+        conn.close()
 
 
 @router.get("/cve/{cve_id}")

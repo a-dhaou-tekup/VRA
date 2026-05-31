@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { fetchTickets, fetchJobs, createTicket } from '../api/client'
+import { jobLabel } from '../utils/jobLabel'
 
 function Spinner() {
   return (
@@ -84,6 +86,7 @@ function CreateTicketModal({ jobId, onClose, onCreated }) {
 }
 
 export default function Tickets() {
+  const navigate = useNavigate()
   const [tickets, setTickets] = useState([])
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -142,8 +145,16 @@ export default function Tickets() {
                   <tbody>
                     {tickets.map((ticket) => (
                       <tr key={ticket.id ?? ticket.ticket_id} style={{ borderBottom: '1px solid var(--border)' }} className="hover:bg-[var(--surface-2)] transition-colors">
-                        <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--amber)' }}>
-                          {ticket.job_id}
+                        <td className="py-2 px-3 font-mono text-xs min-w-[200px]" style={{ color: 'var(--amber)' }}>
+                          <span
+                            className="cursor-pointer hover:underline block"
+                            onClick={() => navigate(`/jobs/${ticket.job_id}`)}
+                            title={ticket.job_id}
+                          >
+                            {jobs.find(j => j.job_id === ticket.job_id)
+                              ? jobLabel(jobs.find(j => j.job_id === ticket.job_id))
+                              : ticket.job_id.slice(0, 8) + '…'}
+                          </span>
                         </td>
                         <td className="py-2 px-3">
                           <span className="mono-label" style={{ textTransform: 'capitalize', letterSpacing: '0.05em' }}>
@@ -151,7 +162,17 @@ export default function Tickets() {
                           </span>
                         </td>
                         <td className="py-2 px-3 font-mono text-xs">
-                          {ticket.ticket_url ? (
+                          {/* console:// URLs aren't real — route internally to the job */}
+                          {ticket.provider === 'console' || !ticket.ticket_url || ticket.ticket_url.startsWith('console://') ? (
+                            <button
+                              className="underline hover:opacity-80 text-left"
+                              style={{ color: 'var(--amber)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit' }}
+                              onClick={() => navigate(`/jobs/${ticket.job_id}`)}
+                              title="View job detail"
+                            >
+                              {ticket.ticket_id}
+                            </button>
+                          ) : (
                             <a
                               href={ticket.ticket_url}
                               target="_blank"
@@ -161,8 +182,6 @@ export default function Tickets() {
                             >
                               {ticket.ticket_id}
                             </a>
-                          ) : (
-                            <span style={{ color: 'var(--text)' }}>{ticket.ticket_id}</span>
                           )}
                         </td>
                         <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
@@ -179,7 +198,7 @@ export default function Tickets() {
           {/* Jobs without tickets */}
           {jobsWithoutTicket.length > 0 && (
             <div className="vra-card">
-              <div className="mono-label mb-4">Jobs Without Tickets ({jobsWithoutTicket.length})</div>
+              <div className="mono-label mb-4">Remediation Jobs Without Tickets ({jobsWithoutTicket.length})</div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -192,8 +211,16 @@ export default function Tickets() {
                   <tbody>
                     {jobsWithoutTicket.map((job) => (
                       <tr key={job.job_id} style={{ borderBottom: '1px solid var(--border)' }} className="hover:bg-[var(--surface-2)] transition-colors">
-                        <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--amber)' }}>{job.job_id}</td>
-                        <td className="py-2 px-3" style={{ color: 'var(--text)' }}>{job.product_name || '—'}</td>
+                        <td className="py-2 px-3 font-mono text-xs min-w-[200px]" style={{ color: 'var(--amber)' }}>
+                          <span
+                            className="cursor-pointer hover:underline block"
+                            onClick={() => navigate(`/jobs/${job.job_id}`)}
+                            title={job.job_id}
+                          >
+                            {jobLabel(job)}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3" style={{ color: 'var(--text)' }}>{job.product_name || job.main_product || '—'}</td>
                         <td className="py-2 px-3">
                           <span className={`badge-${(job.risk_level || 'info').toLowerCase()}`}>{job.risk_level}</span>
                         </td>

@@ -75,30 +75,38 @@ def fetch_nvd_cve(cve_id: str) -> dict:
         return {}
 
 
-def enrich_nvd(cve_ids: Iterable[str]) -> int:
-    conn = _get_conn()
-    unique = list(set(cve_ids))
-    now_ts = datetime.now(timezone.utc)
-    stale = []
+def enrich_nvd(cve_ids: Iterable[str], force: bool = False) -> int:
+    """Fetch NVD descriptions and CWE IDs for the supplied CVE IDs.
 
-    for cve_id in unique:
-        if not cve_id or not cve_id.startswith("CVE-"):
-            continue
-        row = conn.execute(
-            "SELECT nvd_cached_at FROM cve_context WHERE cve_id=?", (cve_id,)
-        ).fetchone()
-        if row is None or not row["nvd_cached_at"]:
-            stale.append(cve_id)
-        else:
-            try:
-                cached = datetime.fromisoformat(row["nvd_cached_at"])
-                if now_ts - cached > timedelta(days=TTL_DAYS):
-                    stale.append(cve_id)
-            except Exception:
+    Args:
+        cve_ids: Iterable of CVE-YYYY-NNNNN strings.
+        force:   When True, bypass the 90-day TTL and always re-fetch from
+                 the NVD API. Use this for manual refresh requests.
+    """
+    conn = _get_conn()
+    unique = [c for c in set(cve_ids) if c and c.startswith("CVE-")]
+    now_ts = datetime.now(timezone.utc)
+
+    if force:
+        stale = unique
+    else:
+        stale = []
+        for cve_id in unique:
+            row = conn.execute(
+                "SELECT nvd_cached_at FROM cve_context WHERE cve_id=?", (cve_id,)
+            ).fetchone()
+            if row is None or not row["nvd_cached_at"]:
                 stale.append(cve_id)
+            else:
+                try:
+                    cached = datetime.fromisoformat(row["nvd_cached_at"])
+                    if now_ts - cached > timedelta(days=TTL_DAYS):
+                        stale.append(cve_id)
+                except Exception:
+                    stale.append(cve_id)
 
     if not stale:
-        logger.info("NVD: all %d CVEs are fresh.", len(unique))
+        logger.info("NVD: all %d CVEs are fresh (force=%s).", len(unique), force)
         conn.close()
         return 0
 

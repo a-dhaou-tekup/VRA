@@ -17,6 +17,7 @@ import RiskRegister from './pages/RiskRegister'
 import ThreatAlerts from './pages/ThreatAlerts'
 import Compliance from './pages/Compliance'
 import Findings from './pages/Findings'
+import FindingDetail from './pages/FindingDetail'
 
 export default function App() {
   return (
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="/threat-alerts" element={<ThreatAlerts />} />
             <Route path="/compliance" element={<Compliance />} />
             <Route path="/findings" element={<Findings />} />
+            <Route path="/findings/:id" element={<FindingDetail />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -468,7 +468,7 @@ export default function JobDetail() {
       {/* Breadcrumb + Header */}
       <div>
         <div className="flex items-center gap-2 mb-3 text-sm" style={{ color: 'var(--muted)' }}>
-          <Link to="/jobs" className="hover:text-[var(--text)] transition-colors">Jobs</Link>
+          <Link to="/jobs" className="hover:text-[var(--text)] transition-colors">Remediation Jobs</Link>
           <span>/</span>
           <span style={{ fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)', fontSize: 12 }}>{id}</span>
         </div>
@@ -635,7 +635,7 @@ export default function JobDetail() {
                     const restricted = RISK_STATES.has(s) && !canRiskAccept
                     return (
                       <option key={s} value={s} disabled={restricted}>
-                        → {s.replace(/_/g, ' ')}{restricted ? '  (requires risk_owner)' : ''}
+                        {s.replace(/_/g, ' ')}{restricted ? '  (requires risk_owner)' : ''}
                       </option>
                     )
                   })}
@@ -650,7 +650,7 @@ export default function JobDetail() {
                   disabled={!transTarget || transLoading || !canWrite}
                   onClick={() => transTarget && handleTransition(transTarget)}
                 >
-                  {transLoading ? 'Applying…' : transTarget ? `Apply → ${transTarget.replace(/_/g, ' ')}` : 'Apply Transition'}
+                  {transLoading ? 'Applying…' : transTarget ? `Apply: ${transTarget.replace(/_/g, ' ')}` : 'Apply Transition'}
                 </button>
                 {transError && (
                   <div className="mt-1 text-xs px-3 py-2 rounded"

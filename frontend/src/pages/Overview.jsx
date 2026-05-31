@@ -132,7 +132,7 @@ export default function Overview() {
       {/* KPI strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
         <KpiCard
-          label="Total Jobs"
+          label="Total Remediation Jobs"
           value={data?.total_jobs}
           sub="all active remediation jobs"
           accent="var(--amber)"
@@ -162,7 +162,7 @@ export default function Overview() {
 
         {/* Donut — risk distribution */}
         <div className="vra-card">
-          <div className="mono-label" style={{ marginBottom: 16 }}>Jobs by Risk Level</div>
+          <div className="mono-label" style={{ marginBottom: 16 }}>Remediation Jobs by Risk Level</div>
           {pieData.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--muted)', fontSize: 13 }}>
               No data yet
@@ -193,7 +193,7 @@ export default function Overview() {
 
         {/* Bar — jobs by status */}
         <div className="vra-card">
-          <div className="mono-label" style={{ marginBottom: 16 }}>Jobs by Status</div>
+          <div className="mono-label" style={{ marginBottom: 16 }}>Remediation Jobs by Status</div>
           {barData.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--muted)', fontSize: 13 }}>
               No data yet
@@ -224,7 +224,7 @@ export default function Overview() {
           borderBottom: '1px solid var(--border)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
-          <div className="mono-label">Recent Active Jobs</div>
+          <div className="mono-label">Recent Active Remediation Jobs</div>
           <button
             className="btn-ghost"
             style={{ fontSize: 11, padding: '4px 10px' }}

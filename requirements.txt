@@ -25,3 +25,4 @@ rapidfuzz>=3.9.0
 python-dotenv>=1.0.0
 aiofiles>=23.2.1
 sse-starlette>=1.6.5          # SSE streaming for chat-with-finding
+networkx>=3.3                 # in-memory graph for blast-radius + similarity queries

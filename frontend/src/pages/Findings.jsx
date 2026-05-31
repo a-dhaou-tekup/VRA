@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { fetchFindings, triggerAutoTriage } from '../api/client'
 
 // ── Triage pill styling ───────────────────────────────────────────────────────
@@ -135,6 +136,7 @@ const SORT_OPTIONS = [
 ]
 
 export default function Findings() {
+  const navigate = useNavigate()
   const [findings,     setFindings]    = useState([])
   const [total,        setTotal]       = useState(0)
   const [loading,      setLoading]     = useState(true)
@@ -321,6 +323,8 @@ export default function Findings() {
                     borderBottom: i < visible.length - 1 ? '1px solid var(--border)' : 'none',
                     transition: 'background 0.1s',
                   }}
+                  onClick={() => navigate(`/findings/${f.id}`)}
+                  style={{ cursor: 'pointer', borderBottom: i < visible.length - 1 ? '1px solid var(--border)' : 'none', transition: 'background 0.1s' }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-2)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >

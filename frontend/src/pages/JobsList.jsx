@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { fetchJobs, updateJobStatus } from '../api/client'
 import RiskBadge from '../components/RiskBadge'
 import StatusBadge from '../components/StatusBadge'
+import { jobLabel } from '../utils/jobLabel'
 
 const STATUS_OPTIONS = ['', 'TO_DO', 'IN_PROGRESS', 'DONE', 'CLOSED', 'RESURFACED']
 const RISK_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']
@@ -81,7 +82,7 @@ export default function JobsList() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="page-title">Jobs</h1>
+          <h1 className="page-title">Remediation Jobs</h1>
           <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
             All remediation jobs — filter, triage, and manage status
           </p>
@@ -149,16 +150,18 @@ export default function JobsList() {
                     style={{ borderBottom: '1px solid var(--border)' }}
                     className="hover:bg-[var(--surface-2)] transition-colors"
                   >
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 min-w-[260px]">
                       <span
-                        className="cursor-pointer hover:underline"
-                        style={{ color: 'var(--amber)', fontFamily: '"IBM Plex Mono", monospace', fontSize: 12 }}
+                        className="cursor-pointer hover:underline block font-mono text-xs leading-snug"
+                        style={{ color: 'var(--amber)' }}
                         onClick={() => navigate(`/jobs/${job.job_id}`)}
+                        title={job.job_id}
                       >
-                        {job.job_id}
+                        {jobLabel(job)}
                       </span>
+                      <span className="text-[10px] text-[var(--muted)] font-mono">{job.job_id.slice(0, 8)}…</span>
                     </td>
-                    <td className="py-3 px-4" style={{ color: 'var(--text)' }}>{job.product_name || '—'}</td>
+                    <td className="py-3 px-4" style={{ color: 'var(--text)' }}>{job.product_name || job.main_product || '—'}</td>
                     <td className="py-3 px-4 font-mono text-xs" style={{ color: 'var(--muted)' }}>
                       {job.assets_count ?? '—'}
                     </td>

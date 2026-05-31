@@ -74,6 +74,7 @@ def create_app() -> FastAPI:
     from api.routers import compliance as compliance_router
     from api.routers import agent as agent_router
     from api.routers import chat as chat_router
+    from api.routers import graph as graph_router
 
     # Auth first so login is always reachable
     app.include_router(auth_router.router)
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(compliance_router.router)
     app.include_router(agent_router.router)
     app.include_router(chat_router.router)
+    app.include_router(graph_router.router)
 
     # ── Health check ──────────────────────────────────────────────────────────
     @app.get("/health", tags=["Health"])

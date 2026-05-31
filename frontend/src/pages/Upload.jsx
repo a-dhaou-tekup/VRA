@@ -2,11 +2,77 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { uploadScanFile, fetchUploads, fetchUpload } from '../api/client'
 
+function ErrorModal({ message, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }} onClick={onClose}>
+      <div className="rounded-xl p-6 w-full max-w-lg shadow-2xl" style={{ background: 'var(--surface)', border: '1px solid rgba(224,82,82,0.5)' }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-xl">❌</span>
+          <h2 className="font-bold text-lg" style={{ fontFamily: 'Syne, sans-serif', color: 'var(--red)' }}>Pipeline Error</h2>
+        </div>
+        <pre className="text-xs font-mono whitespace-pre-wrap break-all px-3 py-3 rounded" style={{ background: 'var(--dark)', color: 'var(--red)', border: '1px solid rgba(224,82,82,0.3)', maxHeight: 300, overflowY: 'auto' }}>
+          {message || 'Unknown error'}
+        </pre>
+        <button className="mt-4 btn-ghost text-sm" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  )
+}
+
+function ResultModal({ item, onClose }) {
+  const stats = item?.stats_json || item?.stats || {}
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }} onClick={onClose}>
+      <div className="rounded-xl p-6 w-full max-w-lg shadow-2xl space-y-4" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3">
+          <span className="text-xl">📊</span>
+          <h2 className="font-bold text-lg" style={{ fontFamily: 'Syne, sans-serif', color: 'var(--text)' }}>Upload Details</h2>
+        </div>
+        <div className="space-y-1 text-xs font-mono" style={{ color: 'var(--muted)' }}>
+          <div><span style={{ color: 'var(--text)' }}>File:</span> {item.original_filename || item.filename}</div>
+          <div>
+            <span style={{ color: 'var(--text)' }}>Scanner:</span> {item.scanner_type}
+          </div>
+          <div>
+            <span style={{ color: 'var(--text)' }}>Parser:</span>{' '}
+            {(item.parser_used || item.stats_json?.parser_used || 'structured')}
+            {(item.parser_used || item.stats_json?.parser_used) === 'llm' && (
+              <span className="ml-2 px-1.5 py-0.5 rounded text-xs font-mono font-semibold uppercase"
+                style={{ background: 'rgba(255,196,13,0.15)', color: 'var(--amber)', border: '1px solid rgba(255,196,13,0.4)' }}>
+                LLM
+              </span>
+            )}
+          </div>
+          <div><span style={{ color: 'var(--text)' }}>Uploaded by:</span> {item.uploaded_by || '—'}</div>
+          <div><span style={{ color: 'var(--text)' }}>Date:</span> {new Date(item.uploaded_at || item.created_at).toLocaleString()}</div>
+          <div><span style={{ color: 'var(--text)' }}>Status:</span> {item.status}</div>
+        </div>
+        {Object.keys(stats).length > 0 && (
+          <div className="grid grid-cols-2 gap-3">
+            {Object.entries(stats).map(([k, v]) => (
+              <div key={k} className="px-3 py-2 rounded" style={{ background: 'var(--dark)', border: '1px solid var(--border)' }}>
+                <div className="text-xs" style={{ color: 'var(--muted)', fontFamily: '"IBM Plex Mono", monospace' }}>{k.replace(/_/g, ' ')}</div>
+                <div className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif', color: 'var(--amber)' }}>{v ?? '—'}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {item.status === 'failed' && item.error_message && (
+          <pre className="text-xs font-mono whitespace-pre-wrap break-all px-3 py-3 rounded" style={{ background: 'var(--dark)', color: 'var(--red)', border: '1px solid rgba(224,82,82,0.3)', maxHeight: 200, overflowY: 'auto' }}>
+            {item.error_message}
+          </pre>
+        )}
+        <button className="btn-ghost text-sm" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  )
+}
+
 const SCANNER_TYPES = [
   { value: 'auto', label: 'Auto-detect' },
   { value: 'nessus', label: 'Nessus XML' },
   { value: 'openvas', label: 'OpenVAS XML' },
-  { value: 'csv', label: 'CSV Generic' },
+  { value: 'csv_generic', label: 'CSV Generic' },
 ]
 
 const STATUS_STEPS = [
@@ -24,6 +90,7 @@ const PIPELINE_STATUS_MAP = {
   building: 'building',
   done: 'done',
   failed: 'failed',
+  llm_extraction_failed: 'failed',
 }
 
 function formatBytes(bytes) {
@@ -37,6 +104,7 @@ function StatusBadgeSmall({ status }) {
   const map = {
     done: { cls: 'text-[var(--green)] bg-[rgba(78,175,124,0.1)] border-[rgba(78,175,124,0.3)]', label: 'Done' },
     failed: { cls: 'text-[var(--red)] bg-[rgba(224,82,82,0.1)] border-[rgba(224,82,82,0.3)]', label: 'Failed' },
+    llm_extraction_failed: { cls: 'text-[var(--red)] bg-[rgba(224,82,82,0.1)] border-[rgba(224,82,82,0.3)]', label: 'LLM Failed' },
     processing: { cls: 'text-[var(--amber)] bg-[rgba(255,196,13,0.1)] border-[rgba(255,196,13,0.3)]', label: 'Processing' },
     uploaded: { cls: 'text-[var(--blue)] bg-[rgba(78,143,175,0.1)] border-[rgba(78,143,175,0.3)]', label: 'Uploaded' },
   }
@@ -62,6 +130,8 @@ function StatBox({ label, value, color }) {
 export default function Upload() {
   const navigate = useNavigate()
   const fileInputRef = useRef(null)
+  const [errorModal, setErrorModal] = useState(null)   // error string
+  const [resultModal, setResultModal] = useState(null) // upload item
   const [isDragging, setIsDragging] = useState(false)
   const [selectedFile, setSelectedFile] = useState(null)
   const [scannerType, setScannerType] = useState('auto')
@@ -99,7 +169,7 @@ export default function Upload() {
           setUploadResult(data)
           setUploading(false)
           loadHistory()
-        } else if (data.status === 'failed') {
+        } else if (data.status === 'failed' || data.status === 'llm_extraction_failed') {
           clearInterval(pollingRef.current)
           setUploadError(data.error_message || 'Pipeline failed')
           setUploading(false)
@@ -176,7 +246,11 @@ export default function Upload() {
       <div>
         <h1 className="page-title">Upload Scan Results</h1>
         <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
-          Upload scanner output to run the full VRA pipeline — accepts <span style={{ fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)' }}>.nessus</span>, <span style={{ fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)' }}>.xml</span>, <span style={{ fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)' }}>.csv</span>
+          Upload scanner output to run the full VRA pipeline — accepts{' '}
+          <span style={{ fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)' }}>.nessus</span>,{' '}
+          <span style={{ fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)' }}>.xml</span>,{' '}
+          <span style={{ fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)' }}>.csv</span>,{' '}
+          or any text format (parsed by LLM)
         </p>
       </div>
 
@@ -317,8 +391,8 @@ export default function Upload() {
           </div>
 
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            <StatBox label="New Jobs" value={uploadResult.stats?.new_jobs} color="var(--green)" />
-            <StatBox label="Updated Jobs" value={uploadResult.stats?.updated_jobs} color="var(--amber)" />
+            <StatBox label="New Remediation Jobs" value={uploadResult.stats?.new_jobs} color="var(--green)" />
+            <StatBox label="Updated Remediation Jobs" value={uploadResult.stats?.updated_jobs} color="var(--amber)" />
             <StatBox label="New Findings" value={uploadResult.stats?.new_findings} color="var(--green)" />
             <StatBox label="Re-detected" value={uploadResult.stats?.redetected_findings} color="var(--amber)" />
           </div>
@@ -335,7 +409,7 @@ export default function Upload() {
           </div>
 
           <button className="btn-amber" onClick={() => navigate('/jobs')}>
-            View Jobs →
+            View Remediation Jobs →
           </button>
         </div>
       )}
@@ -377,47 +451,84 @@ export default function Upload() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  {['Filename', 'Scanner', 'Uploaded At', 'Status', 'Stats'].map((h) => (
+                  {['Filename', 'Scanner', 'Uploaded By', 'Uploaded At', 'Status', 'Stats', ''].map((h) => (
                     <th key={h} className="text-left py-2 px-3 mono-label">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {history.map((item) => (
-                  <tr
-                    key={item.id ?? item.upload_id}
-                    style={{ borderBottom: '1px solid var(--border)' }}
-                    className="hover:bg-[var(--surface-2)] transition-colors"
-                  >
-                    <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--text)' }}>
-                      {item.filename || item.file_name || '—'}
-                    </td>
-                    <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
-                      {item.scanner_type || 'auto'}
-                    </td>
-                    <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
-                      {item.uploaded_at || item.created_at
-                        ? new Date(item.uploaded_at || item.created_at).toLocaleString()
-                        : '—'}
-                    </td>
-                    <td className="py-2 px-3">
-                      <StatusBadgeSmall status={item.status} />
-                    </td>
-                    <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
-                      {item.stats ? (
-                        <span>
-                          {item.stats.new_jobs ?? 0} new ·{' '}
-                          <span style={{ color: 'var(--amber)' }}>{item.stats.redetected_findings ?? 0} re-det</span>
-                        </span>
-                      ) : '—'}
-                    </td>
-                  </tr>
-                ))}
+                {history.map((item) => {
+                  const stats = item.stats_json || item.stats || {}
+                  return (
+                    <tr
+                      key={item.id ?? item.upload_id}
+                      style={{ borderBottom: '1px solid var(--border)' }}
+                      className="hover:bg-[var(--surface-2)] transition-colors"
+                    >
+                      <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--text)' }}>
+                        {item.original_filename || item.filename || '—'}
+                      </td>
+                      <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
+                        {item.scanner_type || 'auto'}
+                        {(item.parser_used || item.stats_json?.parser_used) === 'llm' && (
+                          <span
+                            className="ml-1.5 px-1.5 py-0.5 rounded text-xs font-mono font-semibold uppercase"
+                            style={{ background: 'rgba(255,196,13,0.15)', color: 'var(--amber)', border: '1px solid rgba(255,196,13,0.4)' }}
+                            title="Findings extracted by LLM parser — verify carefully"
+                          >
+                            LLM
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
+                        {item.uploaded_by || '—'}
+                      </td>
+                      <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
+                        {item.uploaded_at || item.created_at
+                          ? new Date(item.uploaded_at || item.created_at).toLocaleString()
+                          : '—'}
+                      </td>
+                      <td className="py-2 px-3">
+                        {item.status === 'failed' ? (
+                          <button
+                            onClick={() => setErrorModal(item.error_message || 'Pipeline failed — no details available')}
+                            title="Click to view error"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                          >
+                            <StatusBadgeSmall status="failed" />
+                          </button>
+                        ) : (
+                          <StatusBadgeSmall status={item.status} />
+                        )}
+                      </td>
+                      <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--muted)' }}>
+                        {stats.new_jobs != null ? (
+                          <span>
+                            {stats.new_jobs} new ·{' '}
+                            <span style={{ color: 'var(--amber)' }}>{stats.redetected_findings ?? 0} re-det</span>
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="py-2 px-3 text-right">
+                        <button
+                          className="text-xs underline hover:opacity-70"
+                          style={{ color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer' }}
+                          onClick={() => setResultModal(item)}
+                        >
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
+
+      {errorModal && <ErrorModal message={errorModal} onClose={() => setErrorModal(null)} />}
+      {resultModal && <ResultModal item={resultModal} onClose={() => setResultModal(null)} />}
     </div>
   )
 }
