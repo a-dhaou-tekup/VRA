@@ -13,6 +13,8 @@ import requests
 import yaml
 
 from rag.retriever import retrieve_for_job
+# Hybrid imports are intentionally deferred inside generate_recommendation
+# so neither the cross-encoder nor the FTS5 DB open at module-import time.
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +183,58 @@ def generate_recommendation(job: dict) -> dict:
     plus a ``_meta`` key containing model/token/latency metadata.
     """
     config = _load_config()
+    use_hybrid: bool = config.get("RAG_USE_HYBRID", True)
 
-    chunks = retrieve_for_job(job)
+    if use_hybrid:
+        # ── Hybrid path: vector + BM25 → RRF → cross-encoder re-rank ─────────
+        from rag.hybrid_search import hybrid_search
+        from rag.reranker import rerank
+
+        # Build a query that gives BM25 exact-match signals (CVE IDs) AND
+        # semantic signals (product + risk level).
+        cve_raw = job.get("cve_list", "[]")
+        if isinstance(cve_raw, str):
+            try:
+                cves = json.loads(cve_raw)
+            except (json.JSONDecodeError, ValueError):
+                cves = [cve_raw] if cve_raw else []
+        else:
+            cves = list(cve_raw) if isinstance(cve_raw, (list, tuple)) else []
+
+        query_parts: list[str] = []
+        query_parts.extend(str(c) for c in cves[:4])       # CVE IDs for BM25
+        if job.get("main_product"):
+            query_parts.append(job["main_product"])
+        if job.get("plugin_family"):
+            query_parts.append(job["plugin_family"])
+        if job.get("max_risk_level"):
+            query_parts.append(f"{job['max_risk_level']} vulnerability remediation")
+        hybrid_query = " ".join(query_parts) or "vulnerability remediation advisory"
+
+        logger.info(
+            "finding.advise [hybrid] query=%.80s  job=%s",
+            hybrid_query, job.get("job_id", "?"),
+        )
+
+        candidates = hybrid_search(hybrid_query, k=50)
+        reranked   = rerank(hybrid_query, candidates, top_n=5)
+
+        # Convert RetrievedDoc → the plain-dict shape the rest of the pipeline expects
+        chunks = [
+            {"text": d["text"], "metadata": d["metadata"], "distance": d.get("distance", 0.0)}
+            for d in reranked
+        ]
+        logger.info(
+            "finding.advise [hybrid] candidates=%d → reranked=%d",
+            len(candidates), len(chunks),
+        )
+    else:
+        # ── Legacy path: two-pass ChromaDB (CVE direct + semantic) ───────────
+        logger.info(
+            "finding.advise [legacy] RAG_USE_HYBRID=False  job=%s",
+            job.get("job_id", "?"),
+        )
+        chunks = retrieve_for_job(job)
 
     # Truncate to top 3 if combined context would exceed the token threshold
     combined_text = " ".join(c["text"] for c in chunks)

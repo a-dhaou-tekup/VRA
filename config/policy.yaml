@@ -57,6 +57,16 @@ rag:
   corpus_dir: data/rag_corpus
   ollama_timeout: 300                  # seconds; override with OLLAMA_TIMEOUT_SECONDS env var
 
+  # ── Hybrid retrieval (feat/rag-hybrid) ──────────────────────────────────────
+  # Set to false to A/B against the original two-pass ChromaDB-only path.
+  RAG_USE_HYBRID: true
+  # Candidates fetched from each retrieval leg before RRF merge
+  hybrid_k: 50
+  # Documents passed to LLM after cross-encoder re-ranking
+  hybrid_top_n: 5
+  # Cross-encoder model name (sentence-transformers, ~80 MB)
+  reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+
   # Structured output schema enforced via Ollama format:json
   output_schema:
     - summary

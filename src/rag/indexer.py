@@ -100,6 +100,17 @@ def index_file(filepath: Path, metadata: dict = None) -> int:
         metadatas=metadatas,
     )
     logger.debug("Indexed %d chunks from '%s'", len(chunks), filepath.name)
+
+    # Mirror into FTS5 for hybrid BM25 retrieval
+    try:
+        from rag.fts import write_chunks as fts_write
+        fts_write(list(zip(ids, chunks)))
+        logger.debug("FTS5: wrote %d chunks from '%s'", len(chunks), filepath.name)
+    except Exception as fts_exc:
+        logger.warning(
+            "FTS5 mirror write failed for '%s' (non-fatal): %s", filepath.name, fts_exc
+        )
+
     return len(chunks)
 
 
