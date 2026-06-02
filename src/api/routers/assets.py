@@ -1,32 +1,48 @@
-"""Assets router — Manual CRUD for asset inventory.
+"""Assets router — Manual CRUD for asset inventory + P4a fleet + software endpoints.
 
-Lets users build / edit their real asset inventory directly via the UI,
-without needing to edit CSV files. Source of ground truth for risk scoring.
+P4a additions:
+  - AssetIn/AssetUpdate gain os_version, site, owning_team
+  - Fleet filters: environment, site, owning_team, business_unit
+  - GET  /api/fleet/summary          — counts grouped by environment+BU
+  - GET  /api/assets/{id}/software   — list installed software
+  - POST /api/assets/{id}/software   — add one software entry
+  - PUT  /api/assets/{id}/software   — replace full software list (bulk)
+  - DELETE /api/assets/{id}/software/{sw_id}
+  - BulkImport now accepts optional 'software' list per row
 """
 
 import logging
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user, require_role
 from api.db.connection import get_db
+from api.repositories import asset_software_repo
+from api.utils.asset_classify import infer as classify_asset
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/assets", tags=["Assets"])
+router = APIRouter(prefix="/api", tags=["Assets"])
 
 _WRITERS = ("analyst", "remediation_owner", "admin")
 
-VALID_CRITICALITY = {"low", "medium", "high", "critical"}
+VALID_CRITICALITY  = {"low", "medium", "high", "critical"}
 VALID_ENVIRONMENTS = {"production", "staging", "dev", "test"}
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
+
+class SoftwareItem(BaseModel):
+    product: str
+    version: Optional[str] = None
+    vendor:  Optional[str] = None
+    cpe:     Optional[str] = None
+
 
 class AssetIn(BaseModel):
     hostname:         str
@@ -36,6 +52,13 @@ class AssetIn(BaseModel):
     criticality:      str = Field("medium", description="low|medium|high|critical")
     internet_exposed: bool = False
     environment:      str = Field("production", description="production|staging|dev|test")
+    # P4a fleet fields
+    os_version:   Optional[str] = None
+    site:         Optional[str] = None
+    owning_team:  Optional[str] = None
+    # cascade dropdown classification
+    asset_type:   Optional[str] = None
+    platform:     Optional[str] = None
 
 
 class AssetUpdate(BaseModel):
@@ -46,6 +69,13 @@ class AssetUpdate(BaseModel):
     criticality:      Optional[str]  = None
     internet_exposed: Optional[bool] = None
     environment:      Optional[str]  = None
+    # P4a
+    os_version:   Optional[str] = None
+    site:         Optional[str] = None
+    owning_team:  Optional[str] = None
+    # cascade dropdown classification
+    asset_type:   Optional[str] = None
+    platform:     Optional[str] = None
 
 
 def _validate_asset(data: dict) -> None:
@@ -69,33 +99,86 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     return d
 
 
-# ── List ───────────────────────────────────────────────────────────────────────
+# ── Fleet summary ──────────────────────────────────────────────────────────────
 
-@router.get("")
+@router.get("/fleet/summary")
+def fleet_summary(
+    conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Return asset counts grouped by environment and business_unit."""
+    by_env = conn.execute(
+        "SELECT environment, COUNT(*) AS cnt FROM assets GROUP BY environment ORDER BY environment"
+    ).fetchall()
+    by_bu = conn.execute(
+        "SELECT business_unit, COUNT(*) AS cnt FROM assets GROUP BY business_unit ORDER BY business_unit"
+    ).fetchall()
+    by_site = conn.execute(
+        "SELECT site, COUNT(*) AS cnt FROM assets WHERE site IS NOT NULL GROUP BY site ORDER BY site"
+    ).fetchall()
+    by_team = conn.execute(
+        "SELECT owning_team, COUNT(*) AS cnt FROM assets WHERE owning_team IS NOT NULL GROUP BY owning_team ORDER BY owning_team"
+    ).fetchall()
+    by_asset_type = conn.execute(
+        "SELECT asset_type, COUNT(*) AS cnt FROM assets WHERE asset_type IS NOT NULL GROUP BY asset_type ORDER BY asset_type"
+    ).fetchall()
+    by_platform = conn.execute(
+        "SELECT platform, COUNT(*) AS cnt FROM assets WHERE platform IS NOT NULL GROUP BY platform ORDER BY platform"
+    ).fetchall()
+    exposed_count = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM assets WHERE internet_exposed = 1"
+    ).fetchone()["cnt"]
+    total = conn.execute("SELECT COUNT(*) AS cnt FROM assets").fetchone()["cnt"]
+
+    return {
+        "data": {
+            "total": total,
+            "internet_exposed": exposed_count,
+            "by_environment": [dict(r) for r in by_env],
+            "by_business_unit": [dict(r) for r in by_bu],
+            "by_site": [dict(r) for r in by_site],
+            "by_owning_team": [dict(r) for r in by_team],
+            "by_asset_type": [dict(r) for r in by_asset_type],
+            "by_platform": [dict(r) for r in by_platform],
+        }
+    }
+
+
+# ── Asset list ─────────────────────────────────────────────────────────────────
+
+@router.get("/assets")
 def list_assets(
-    business_unit: Optional[str] = Query(None),
-    criticality:   Optional[str] = Query(None),
+    business_unit:    Optional[str]  = Query(None),
+    criticality:      Optional[str]  = Query(None),
     internet_exposed: Optional[bool] = Query(None),
-    search:        Optional[str] = Query(None, description="Substring match on hostname or IP"),
+    environment:      Optional[str]  = Query(None),
+    site:             Optional[str]  = Query(None),
+    owning_team:      Optional[str]  = Query(None),
+    search:           Optional[str]  = Query(None, description="Substring match on hostname or IP"),
     limit:  int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     conn:   sqlite3.Connection = Depends(get_db),
     user:   dict = Depends(get_current_user),
 ):
-    sql = "SELECT * FROM assets WHERE 1=1"
+    sql    = "SELECT * FROM assets WHERE 1=1"
     params: list = []
+
     if business_unit:
-        sql += " AND business_unit = ?"
-        params.append(business_unit)
+        sql += " AND business_unit = ?"; params.append(business_unit)
     if criticality:
-        sql += " AND criticality = ?"
-        params.append(criticality)
+        sql += " AND criticality = ?";   params.append(criticality)
     if internet_exposed is not None:
-        sql += " AND internet_exposed = ?"
-        params.append(int(internet_exposed))
+        sql += " AND internet_exposed = ?"; params.append(int(internet_exposed))
+    if environment:
+        sql += " AND environment = ?";   params.append(environment)
+    if site:
+        sql += " AND site = ?";          params.append(site)
+    if owning_team:
+        sql += " AND owning_team = ?";   params.append(owning_team)
     if search:
         sql += " AND (hostname LIKE ? OR ip_address LIKE ?)"
         params.extend([f"%{search}%", f"%{search}%"])
+
     sql += " ORDER BY hostname LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
@@ -105,26 +188,23 @@ def list_assets(
 
 # ── Get one ────────────────────────────────────────────────────────────────────
 
-@router.get("/{asset_id}")
+@router.get("/assets/{asset_id}")
 def get_asset(
     asset_id: str,
     conn:     sqlite3.Connection = Depends(get_db),
     user:     dict = Depends(get_current_user),
 ):
-    row = conn.execute(
-        "SELECT * FROM assets WHERE asset_id = ?", (asset_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Asset '{asset_id}' not found.",
-        )
-    return {"data": _row_to_dict(row)}
+        raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
+    d = _row_to_dict(row)
+    d["software"] = asset_software_repo.get_by_asset(conn, asset_id)
+    return {"data": d}
 
 
 # ── Create ─────────────────────────────────────────────────────────────────────
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("/assets", status_code=status.HTTP_201_CREATED)
 def create_asset(
     asset: AssetIn,
     conn:  sqlite3.Connection = Depends(get_db),
@@ -136,10 +216,10 @@ def create_asset(
         "SELECT asset_id FROM assets WHERE hostname = ? OR ip_address = ?",
         (asset.hostname, asset.ip_address),
     ).fetchone()
-    if existing is not None:
+    if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Asset with hostname '{asset.hostname}' or IP '{asset.ip_address}' already exists (id={existing['asset_id']}).",
+            detail=f"Asset already exists (id={existing['asset_id']}).",
         )
 
     asset_id = str(uuid.uuid4())
@@ -147,51 +227,42 @@ def create_asset(
     conn.execute(
         """INSERT INTO assets
            (asset_id, hostname, ip_address, business_owner, business_unit,
-            criticality, environment, internet_exposed, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            criticality, environment, internet_exposed,
+            os_version, site, owning_team, asset_type, platform,
+            created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             asset_id,
-            asset.hostname,
-            asset.ip_address,
-            asset.business_owner,
-            asset.business_unit,
-            asset.criticality.lower(),
-            asset.environment.lower(),
+            asset.hostname, asset.ip_address,
+            asset.business_owner, asset.business_unit,
+            asset.criticality.lower(), asset.environment.lower(),
             int(asset.internet_exposed),
-            now,
-            now,
+            asset.os_version, asset.site, asset.owning_team,
+            asset.asset_type, asset.platform,
+            now, now,
         ),
     )
     conn.commit()
-
-    row = conn.execute(
-        "SELECT * FROM assets WHERE asset_id = ?", (asset_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
     return {"data": _row_to_dict(row)}
 
 
 # ── Update ─────────────────────────────────────────────────────────────────────
 
-@router.patch("/{asset_id}")
+@router.patch("/assets/{asset_id}")
 def update_asset(
     asset_id: str,
     patch:    AssetUpdate,
     conn:     sqlite3.Connection = Depends(get_db),
     user:     dict = Depends(require_role(*_WRITERS)),
 ):
-    existing = conn.execute(
-        "SELECT * FROM assets WHERE asset_id = ?", (asset_id,)
-    ).fetchone()
+    existing = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
     if existing is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Asset '{asset_id}' not found.",
-        )
+        raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
 
     updates = patch.model_dump(exclude_none=True)
     if not updates:
         return {"data": _row_to_dict(existing)}
-
     _validate_asset(updates)
 
     set_parts: list = []
@@ -211,51 +282,100 @@ def update_asset(
     params.append(datetime.now(timezone.utc).isoformat())
     params.append(asset_id)
 
-    conn.execute(
-        f"UPDATE assets SET {', '.join(set_parts)} WHERE asset_id = ?",
-        params,
-    )
+    conn.execute(f"UPDATE assets SET {', '.join(set_parts)} WHERE asset_id = ?", params)
     conn.commit()
-
-    row = conn.execute(
-        "SELECT * FROM assets WHERE asset_id = ?", (asset_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
     return {"data": _row_to_dict(row)}
 
 
 # ── Delete ─────────────────────────────────────────────────────────────────────
 
-@router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_asset(
     asset_id: str,
     conn:     sqlite3.Connection = Depends(get_db),
     user:     dict = Depends(require_role("admin")),
 ):
-    row = conn.execute(
-        "SELECT asset_id FROM assets WHERE asset_id = ?", (asset_id,)
-    ).fetchone()
+    row = conn.execute("SELECT asset_id FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Asset '{asset_id}' not found.",
-        )
+        raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
 
-    # Refuse delete if any jobs reference this asset
     job_ref = conn.execute(
-        "SELECT job_id FROM jobs WHERE asset_ids LIKE ? LIMIT 1",
-        (f"%{asset_id}%",),
+        "SELECT job_id FROM jobs WHERE asset_ids LIKE ? LIMIT 1", (f"%{asset_id}%",)
     ).fetchone()
-    if job_ref is not None:
+    if job_ref:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot delete asset: it is referenced by job '{job_ref['job_id']}'.",
+            status_code=409,
+            detail=f"Cannot delete: referenced by job '{job_ref['job_id']}'.",
         )
-
     conn.execute("DELETE FROM assets WHERE asset_id = ?", (asset_id,))
     conn.commit()
 
 
-# ── Bulk CSV import ────────────────────────────────────────────────────────────
+# ── Software sub-endpoints ─────────────────────────────────────────────────────
+
+@router.get("/assets/{asset_id}/software")
+def list_software(
+    asset_id: str,
+    conn:     sqlite3.Connection = Depends(get_db),
+    user:     dict = Depends(get_current_user),
+):
+    _require_asset(conn, asset_id)
+    return {"data": asset_software_repo.get_by_asset(conn, asset_id)}
+
+
+@router.post("/assets/{asset_id}/software", status_code=status.HTTP_201_CREATED)
+def add_software(
+    asset_id: str,
+    item:     SoftwareItem,
+    conn:     sqlite3.Connection = Depends(get_db),
+    user:     dict = Depends(require_role(*_WRITERS)),
+):
+    _require_asset(conn, asset_id)
+    row = asset_software_repo.upsert(
+        conn, asset_id,
+        product=item.product, version=item.version,
+        vendor=item.vendor, cpe=item.cpe,
+    )
+    return {"data": row}
+
+
+@router.put("/assets/{asset_id}/software")
+def replace_software(
+    asset_id: str,
+    items:    List[SoftwareItem],
+    conn:     sqlite3.Connection = Depends(get_db),
+    user:     dict = Depends(require_role(*_WRITERS)),
+):
+    """Replace the full software inventory for an asset."""
+    _require_asset(conn, asset_id)
+    rows = asset_software_repo.bulk_replace(
+        conn, asset_id,
+        [i.model_dump() for i in items],
+    )
+    return {"data": rows}
+
+
+@router.delete("/assets/{asset_id}/software/{sw_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_software(
+    asset_id: str,
+    sw_id:    int,
+    conn:     sqlite3.Connection = Depends(get_db),
+    user:     dict = Depends(require_role(*_WRITERS)),
+):
+    _require_asset(conn, asset_id)
+    ok = asset_software_repo.delete_one(conn, sw_id, asset_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Software entry {sw_id} not found.")
+
+
+def _require_asset(conn: sqlite3.Connection, asset_id: str) -> None:
+    row = conn.execute("SELECT asset_id FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
+
+
+# ── Bulk CSV import (extended with fleet columns + optional software list) ─────
 
 class BulkImportRow(BaseModel):
     hostname:         str
@@ -265,22 +385,60 @@ class BulkImportRow(BaseModel):
     criticality:      str = "medium"
     internet_exposed: bool = False
     environment:      str = "production"
+    # P4a fleet
+    os_version:   Optional[str] = None
+    site:         Optional[str] = None
+    owning_team:  Optional[str] = None
+    # cascade dropdown classification
+    asset_type:   Optional[str] = None
+    platform:     Optional[str] = None
+    # P4a software — optional inline list
+    software: Optional[List[SoftwareItem]] = None
 
 
 class BulkImport(BaseModel):
     assets: list[BulkImportRow]
-    upsert: bool = Field(True, description="If true, update existing assets matched by hostname")
+    upsert: bool = Field(True, description="Update existing assets matched by hostname")
 
 
-@router.post("/bulk", status_code=status.HTTP_200_OK)
+# ── Backfill asset_type / platform for unclassified assets ────────────────────
+
+@router.post("/assets/classify", status_code=status.HTTP_200_OK)
+def backfill_classification(
+    conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(require_role(*_WRITERS)),
+):
+    """Infer and write asset_type / platform for all assets missing those fields."""
+    rows = conn.execute(
+        "SELECT asset_id, hostname, os_version FROM assets WHERE asset_type IS NULL OR platform IS NULL"
+    ).fetchall()
+
+    updated = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for r in rows:
+        a_type, a_plat = classify_asset(r["hostname"], r["os_version"] or "")
+        if a_type or a_plat:
+            conn.execute(
+                """UPDATE assets SET
+                       asset_type = COALESCE(asset_type, ?),
+                       platform   = COALESCE(platform, ?),
+                       updated_at = ?
+                   WHERE asset_id = ?""",
+                (a_type, a_plat, now, r["asset_id"]),
+            )
+            updated += 1
+
+    conn.commit()
+    return {"data": {"total_unclassified": len(rows), "updated": updated}}
+
+
+@router.post("/assets/bulk", status_code=status.HTTP_200_OK)
 def bulk_import(
     payload: BulkImport,
     conn:    sqlite3.Connection = Depends(get_db),
     user:    dict = Depends(require_role(*_WRITERS)),
 ):
-    inserted = 0
-    updated = 0
-    skipped = 0
+    inserted = 0; updated = 0; skipped = 0; sw_upserted = 0
     errors: list[str] = []
     now = datetime.now(timezone.utc).isoformat()
 
@@ -288,8 +446,15 @@ def bulk_import(
         try:
             _validate_asset(row.model_dump())
         except HTTPException as exc:
-            errors.append(f"{row.hostname}: {exc.detail}")
-            continue
+            errors.append(f"{row.hostname}: {exc.detail}"); continue
+
+        # Auto-infer asset_type / platform from hostname + os_version if not supplied
+        a_type = row.asset_type
+        a_plat = row.platform
+        if not a_type or not a_plat:
+            inferred_type, inferred_plat = classify_asset(row.hostname, row.os_version or "")
+            a_type = a_type or inferred_type
+            a_plat = a_plat or inferred_plat
 
         existing = conn.execute(
             "SELECT asset_id FROM assets WHERE hostname = ?", (row.hostname,)
@@ -297,41 +462,61 @@ def bulk_import(
 
         if existing is not None:
             if not payload.upsert:
-                skipped += 1
-                continue
+                skipped += 1; continue
+            aid = existing["asset_id"]
             conn.execute(
                 """UPDATE assets
-                   SET ip_address = ?, business_unit = ?, business_owner = ?,
-                       criticality = ?, environment = ?, internet_exposed = ?, updated_at = ?
-                   WHERE asset_id = ?""",
+                   SET ip_address=?, business_unit=?, business_owner=?,
+                       criticality=?, environment=?, internet_exposed=?,
+                       os_version=?, site=?, owning_team=?,
+                       asset_type=?, platform=?, updated_at=?
+                   WHERE asset_id=?""",
                 (
                     row.ip_address, row.business_unit, row.business_owner,
                     row.criticality.lower(), row.environment.lower(),
-                    int(row.internet_exposed), now, existing["asset_id"],
+                    int(row.internet_exposed),
+                    row.os_version, row.site, row.owning_team,
+                    a_type, a_plat,
+                    now, aid,
                 ),
             )
             updated += 1
         else:
+            aid = str(uuid.uuid4())
             conn.execute(
                 """INSERT INTO assets
                    (asset_id, hostname, ip_address, business_owner, business_unit,
-                    criticality, environment, internet_exposed, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    criticality, environment, internet_exposed,
+                    os_version, site, owning_team, asset_type, platform,
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid.uuid4()), row.hostname, row.ip_address,
+                    aid, row.hostname, row.ip_address,
                     row.business_owner, row.business_unit,
                     row.criticality.lower(), row.environment.lower(),
-                    int(row.internet_exposed), now, now,
+                    int(row.internet_exposed),
+                    row.os_version, row.site, row.owning_team,
+                    a_type, a_plat,
+                    now, now,
                 ),
             )
             inserted += 1
 
+        # Software sub-list
+        if row.software:
+            result = asset_software_repo.bulk_replace(
+                conn, aid,
+                [s.model_dump() for s in row.software],
+            )
+            sw_upserted += len(result)
+
     conn.commit()
     return {
         "data": {
-            "inserted": inserted,
-            "updated":  updated,
-            "skipped":  skipped,
-            "errors":   errors,
+            "inserted":     inserted,
+            "updated":      updated,
+            "skipped":      skipped,
+            "sw_upserted":  sw_upserted,
+            "errors":       errors,
         }
     }

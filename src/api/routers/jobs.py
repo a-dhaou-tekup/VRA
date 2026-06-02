@@ -8,7 +8,7 @@ import sqlite3
 
 from api.auth import get_current_user, require_role
 from api.db.connection import get_db
-from api.models.schemas import JobStatusUpdate, TriageUpdate
+from api.models.schemas import JobStatusUpdate, TriageUpdate, SlaOverrideUpdate
 from api.repositories import jobs_repo, events_repo
 from api.services import lifecycle_service
 
@@ -126,6 +126,46 @@ def triage_job(
 
     job = jobs_repo.get_job_by_id(conn, job_id)
     return {"data": job}
+
+
+# ── Custom SLA override ───────────────────────────────────────────────────────
+
+@router.patch("/{job_id}/sla")
+def set_sla_override(
+    job_id:  str,
+    payload: SlaOverrideUpdate,
+    conn:    sqlite3.Connection = Depends(get_db),
+    user:    dict               = Depends(require_role(*_WRITERS, "risk_owner")),
+):
+    """Set or clear a custom SLA override (days) for a job."""
+    job = jobs_repo.get_job_by_id(conn, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job '{job_id}' not found.",
+        )
+
+    conn.execute(
+        "UPDATE jobs SET sla_override_days = ?, updated_at = datetime('now') WHERE job_id = ?",
+        (payload.sla_override_days, job_id),
+    )
+
+    # audit trail
+    action = f"SLA override set to {payload.sla_override_days}d" if payload.sla_override_days else "SLA override cleared"
+    comment = payload.comment or action
+    events_repo.write_event(
+        conn,
+        job_id=job_id,
+        event_type="sla_override",
+        old_status=None,
+        new_status=None,
+        changed_by=user["username"],
+        comment=comment,
+    )
+    conn.commit()
+
+    updated = jobs_repo.get_job_by_id(conn, job_id)
+    return {"data": updated}
 
 
 # ── Event history ─────────────────────────────────────────────────────────────

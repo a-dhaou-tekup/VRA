@@ -366,6 +366,23 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # ── Prompt #9: executive PDF reports ─────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS exec_reports (
+            id              TEXT PRIMARY KEY,
+            created_at      TEXT NOT NULL,
+            created_by      TEXT NOT NULL,
+            period_start    TEXT NOT NULL,
+            period_end      TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            summary_text    TEXT,
+            summary_source  TEXT,
+            pdf_path        TEXT,
+            error_message   TEXT,
+            metadata_json   TEXT
+        )
+    """)
+
     conn.commit()
 
 
@@ -633,21 +650,31 @@ def _seed_users(conn: sqlite3.Connection) -> int:
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def run_migrations(conn: sqlite3.Connection) -> None:
-    """Run all migrations in order. Safe to call multiple times."""
-    logger.info("migrate: starting…")
+    """Run all migrations in order. Safe to call multiple times.
+
+    Set env var  VRA_SKIP_SEED=true  to skip job and asset CSV seeding while
+    still creating all tables and seeding the demo user accounts.  Used by the
+    demo instance (start_demo.bat) so the DB starts completely empty.
+    """
+    import os
+    skip_seed = os.getenv("VRA_SKIP_SEED", "false").lower() == "true"
+    logger.info("migrate: starting… (skip_seed=%s)", skip_seed)
+
     _create_tables(conn)
     _alter_tables(conn)
 
-    try:
-        _seed_jobs(conn)
-    except Exception as exc:
-        logger.warning("migrate: job seeding skipped — %s", exc)
+    if not skip_seed:
+        try:
+            _seed_jobs(conn)
+        except Exception as exc:
+            logger.warning("migrate: job seeding skipped — %s", exc)
 
-    try:
-        _seed_assets(conn)
-    except Exception as exc:
-        logger.warning("migrate: asset seeding skipped — %s", exc)
+        try:
+            _seed_assets(conn)
+        except Exception as exc:
+            logger.warning("migrate: asset seeding skipped — %s", exc)
 
+    # Always seed the user accounts so the demo instance can log in.
     try:
         _seed_users(conn)
     except Exception as exc:

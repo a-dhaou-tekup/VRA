@@ -1,0 +1,107 @@
+[
+  {
+    "id": "L03",
+    "answer": "Here are the critical jobs that are still open:\n\n1. **Job ID:** `job-a30565bd`\n   - **Main Product:** Fortinet\n   - **CVE List:** CVE-2024-21762 (KEV-present)\n   - **Risk Level:** CRITICAL\n   - **SLA Days Left:** 8 days (due date: May 29, 2026)\n   - **Status:** IN_PROGRESS\n\n2. **Job ID:** `job-c73a3fb9`\n   - **Main Product:** CVE-2024-3400\n   - **CVE List:** CVE-2024-3400 (KEV-present)\n   - **Risk Level:** CRITICAL\n   - **SLA Days Left:** 8 days (due date: May 29, 2026)\n   - **Status:** IN_PROGRESS\n\nBoth jobs are still in progress and have not been assigned to a specific team yet. They need immediate attention as they pose critical risks to your network environment.",
+    "tools_called": [
+      {
+        "name": "list_jobs",
+        "args": {
+          "status": "open",
+          "risk_level": "CRITICAL"
+        },
+        "ok": true
+      }
+    ],
+    "contexts": [],
+    "_meta": {
+      "mode": "native",
+      "iterations": 2,
+      "model": "qwen2.5:14b",
+      "elapsed_s": 10.1
+    }
+  },
+  {
+    "id": "L08",
+    "answer": "There are currently 0 KEV findings that are past their SLA deadline.",
+    "tools_called": [
+      {
+        "name": "list_jobs",
+        "args": {
+          "kev_only": true,
+          "past_sla": true
+        },
+        "ok": true
+      }
+    ],
+    "contexts": [],
+    "_meta": {
+      "mode": "native",
+      "iterations": 2,
+      "model": "qwen2.5:14b",
+      "elapsed_s": 5.3
+    }
+  },
+  {
+    "id": "A01",
+    "answer": "范冰春\n{\"name\": \"search_knowledge\", \"arguments\": {\"query\": \"prioritize vulnerability remediation with limited resources\", \"top_k\": 5}}\n</tool_call>",
+    "tools_called": [],
+    "contexts": [],
+    "_meta": {
+      "mode": "native",
+      "iterations": 1,
+      "model": "qwen2.5:14b",
+      "elapsed_s": 2.9
+    }
+  },
+  {
+    "id": "C03",
+    "answer": "การตั้งค่าวิทยาลัยความปลอดภัยของเราครอบคลุมที่ควบคุม CIS Control 7 (Continuous Vulnerability Management) และสถานะเป็น **fully covered** (ครบถ้วน). \n\nข้อมูลที่สำคัญ:\n- VRA มีการทำงานในการรับ CISA KEV, EPSS และ NVD feeds และตรวจสอบกับฐานข้อมูลทรัพยากรและซอฟต์แวร์เพื่อให้คำเตือนภัยคุกคาม.\n- จำนวนงานที่อยู่ในรายการ KEV: 3\n- จำนวนคำเตือนภัยคุกคาม (Threat Alerts): 500\n\nคุณสามารถดูข้อมูลเพิ่มเติมเกี่ยวกับการอ้างอิงและข้อเท็จจริงทางเทคนิคที่ลิงค์นี้: \n- [Enrichment](/enrichment)\n- [Threat Alerts](/assets)",
+    "tools_called": [
+      {
+        "name": "query_controls",
+        "args": {
+          "control_id": "CIS-7"
+        },
+        "ok": true
+      }
+    ],
+    "contexts": [],
+    "_meta": {
+      "mode": "native",
+      "iterations": 2,
+      "model": "qwen2.5:14b",
+      "elapsed_s": 10.0
+    }
+  },
+  {
+    "id": "M02",
+    "answer": "Our overall security posture currently has a total of 11 remediation jobs, with all overdue jobs addressed (SLA compliance at 100%). We have 2 CRITICAL and 1 HIGH risk open jobs, along with 3 CISA KEV jobs. The focus should be on the 2 critical and 1 high-risk vulnerabilities to ensure they are resolved promptly.\n\nAdvisory guidance suggests prioritizing updates and mitigation actions as per vendor instructions for any known exploited vulnerabilities (KEVs). Specifically, addressing CVEs like **CVE-2017-5689**, **CVE-2023-20269**, and others listed in the KEV catalog is crucial. These involve serious risks such as privilege escalation and unauthorized access that require immediate attention.\n\nGiven this, focus on remediating any open critical or high-risk vulnerabilities first, especially those linked to CISA KEVs for compliance and risk mitigation purposes.",
+    "tools_called": [
+      {
+        "name": "get_metrics",
+        "args": {},
+        "ok": true
+      },
+      {
+        "name": "search_knowledge",
+        "args": {
+          "query": "where to focus on for current security posture"
+        },
+        "ok": true
+      }
+    ],
+    "contexts": [
+      "CISA KEV Entry CVE: CVE-2017-5689 Vendor: Intel Product: Active Management Technology (AMT), Small Business Technology (SBT), and Standard Manageability Vulnerability Name: Intel Active Management Technology (AMT), Small Business Technology (SBT), and Standard Manageability Privilege Escalation Vulnerability Date Added: 2022-01-28 Required Action: Apply updates per vendor instructions. Due Date: 2022-07-28 Short Description: Intel products contain a vulnerability which can allow attackers to perform privilege escalation. Status: Known Exploited",
+      "CISA KEV Entry CVE: CVE-2026-20131 Vendor: Cisco Product: Secure Firewall Management Center (FMC) Vulnerability Name: Cisco Secure Firewall Management Center (FMC) Software and Cisco Security Cloud Control (SCC) Firewall Management Deserialization of Untrusted Data Vulnerability Date Added: 2026-03-19 Required Action: Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable. Due Date: 2026-03-22 Short Description: Cisco Secure Firewall Management Center (FMC) Software and Cisco Security Cloud Control (SCC) Firewall Management contain a deserialization of untrusted data vulnerability in the web-based management interface that could allow an unauthenticated, remote attacker to execute arbitrary Java code as root on an affected device. Status: Known Exploited",
+      "CISA KEV Entry CVE: CVE-2023-20269 Vendor: Cisco Product: Adaptive Security Appliance and Firepower Threat Defense Vulnerability Name: Cisco Adaptive Security Appliance and Firepower Threat Defense Unauthorized Access Vulnerability Date Added: 2023-09-13 Required Action: Apply mitigations per vendor instructions for group-lock and vpn-simultaneous-logins or discontinue use of the product for unsupported devices. Due Date: 2023-10-04 Short Description: Cisco Adaptive Security Appliance and Firepower Threat Defense contain an unauthorized access vulnerability that could allow an unauthenticated, remote attacker to conduct a brute force attack in an attempt to identify valid username and password combinations or establish a clientless SSL VPN session with an unauthorized user. Status: Known Exploited",
+      "CISA KEV Entry CVE: CVE-2025-20333 Vendor: Cisco Product: Secure Firewall Adaptive Security Appliance and Secure Firewall Threat Defense Vulnerability Name: Cisco Secure Firewall Adaptive Security Appliance (ASA) and Secure Firewall Threat Defense (FTD) Buffer Overflow Vulnerability Date Added: 2025-09-25 Required Action: The KEV due date refers to the deadline by which FCEB agencies are expected to review and begin implementing the guidance outlined in Emergency Directive (ED) 25-03 (URL listed below in Notes). Agencies must follow the mitigation steps provided by CISA (URL listed below in Notes) and vendor’s instructions (URL listed below in Notes). Adhere to the applicable BOD 22-01 guidance for cloud services or discontinue use of the product if mitigations are not available. Due Date: 2025-09-26 Short Description: Cisco Secure Firewall Adaptive Security (ASA) Appliance and Secure Firewall Threat Defense (FTD) Software VPN Web Server contain a buffer overflow vulnerability that allows for remote code execution. This vulnerability could be chained with CVE-2025-20362. Status: Known Exploited",
+      "CISA KEV Entry CVE: CVE-2020-24557 Vendor: Trend Micro Product: Apex One, OfficeScan, and Worry-Free Business Security Vulnerability Name: Trend Micro Multiple Products Improper Access Control Vulnerability Date Added: 2021-11-03 Required Action: Apply updates per vendor instructions. Due Date: 2022-05-03 Short Description: Trend Micro Apex One, OfficeScan, and Worry-Free Business Security on Microsoft Windows contain an improper access control vulnerability that may allow an attacker to manipulate a particular product folder to disable the security temporarily, abuse a specific Windows function, and attain privilege escalation. Status: Known Exploited"
+    ],
+    "_meta": {
+      "mode": "native",
+      "iterations": 2,
+      "model": "qwen2.5:14b",
+      "elapsed_s": 18.0
+    }
+  }
+]

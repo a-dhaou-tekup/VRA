@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+export const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export const api = axios.create({
   baseURL: BASE_URL,
@@ -145,7 +145,7 @@ export const agentFeedback  = (body) => api.post('/api/agent/feedback', body)
 export const fetchAgentTools = ()   => api.get('/api/agent/tools')
 
 // ─── Findings + Auto-triage ───────────────────────────────────────────────────
-export const fetchFindings    = (params) => api.get('/api/findings', { params })
+export const fetchFindings    = (params) => api.get('/api/findings/', { params })
 export const triggerAutoTriage = (findingId, force = false) =>
   api.post(`/api/findings/${findingId}/auto-triage`, null, { params: { force } })
 export const fetchAutoTriage  = (findingId) =>
@@ -158,6 +158,31 @@ export const fetchSimilarFindings = (findingId, k = 10) =>
   api.get(`/api/findings/${findingId}/similar`, { params: { k } })
 export const refreshGraph = () =>
   api.post('/api/graph/refresh')
+
+// ─── Executive Reports (Prompt #9) ───────────────────────────────────────────
+export const createExecReport = (body = {}) => api.post('/api/reports/executive', body)
+export const listExecReports  = (params)    => api.get('/api/reports/executive', { params })
+export const getExecReport    = (id)        => api.get(`/api/reports/executive/${id}`)
+
+/**
+ * Download a PDF via axios (carries the Bearer token) then trigger a
+ * browser save-as dialog using a blob URL.  This avoids the 401 that
+ * occurs when the browser opens the URL directly without auth headers.
+ */
+export async function downloadExecReport(id) {
+  const resp = await api.get(`/api/reports/executive/${id}/pdf`, {
+    responseType: 'blob',
+  })
+  const blob = new Blob([resp.data], { type: 'application/pdf' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `vra-exec-report-${id.slice(0, 8)}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
 
 // ─── Chat-with-Finding ───────────────────────────────────────────────────────
 export const fetchFindingConversations = (jobId) =>

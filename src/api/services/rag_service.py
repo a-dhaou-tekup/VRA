@@ -47,6 +47,7 @@ def get_cached_advice(conn: sqlite3.Connection, job: dict) -> Optional[dict]:
     cursor = conn.execute(
         """SELECT * FROM llm_advice
            WHERE cve_hash = ? AND job_id = ?
+             AND model_name != 'unavailable'
            ORDER BY created_at DESC LIMIT 1""",
         (cve_hash, job.get("job_id", "")),
     )
@@ -82,8 +83,9 @@ def cache_advice(
     cursor = conn.execute(
         """INSERT INTO llm_advice
                (job_id, cve_hash, product, recommendation_json, model_name,
-                prompt_tokens, response_tokens, latency_ms, feedback, created_at)
-           VALUES (?,?,?,?,?,?,?,?,0,?)""",
+                prompt_tokens, response_tokens, latency_ms, feedback,
+                interaction_type, created_at)
+           VALUES (?,?,?,?,?,?,?,?,0,'recommendation',?)""",
         (
             job_id,
             cve_hash,
@@ -137,7 +139,8 @@ def generate_recommendation(job: dict) -> dict:
 def get_chroma_stats() -> dict:
     """Return ChromaDB collection stats. Returns stub if ChromaDB is not available."""
     try:
-        from rag.retriever import get_collection_stats
+        # get_collection_stats lives in rag.indexer, not rag.retriever (Bug #3 fix)
+        from rag.indexer import get_collection_stats
         return get_collection_stats()
     except Exception as exc:
         logger.warning("Could not retrieve ChromaDB stats: %s", exc)
@@ -145,7 +148,7 @@ def get_chroma_stats() -> dict:
     return {
         "total_chunks":    0,
         "total_files":     0,
-        "collection_name": "vra_advisories",   # matches indexer.py collection name
+        "collection_name": "vra_advisories",
         "model":           "unavailable",
         "error":           "RAG retriever not initialised",
     }

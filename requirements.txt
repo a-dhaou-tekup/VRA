@@ -26,3 +26,8 @@ python-dotenv>=1.0.0
 aiofiles>=23.2.1
 sse-starlette>=1.6.5          # SSE streaming for chat-with-finding
 networkx>=3.3                 # in-memory graph for blast-radius + similarity queries
+bcrypt>=4.0.0                 # direct bcrypt (passlib version-detection workaround)
+
+# ── Executive PDF reports ─────────────────────────────────────────────────────
+fpdf2>=2.7.9                  # pure-Python PDF; no system libs needed on Windows
+matplotlib>=3.9.0             # KPI trend charts embedded in PDF

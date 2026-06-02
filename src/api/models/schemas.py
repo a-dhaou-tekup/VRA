@@ -32,6 +32,17 @@ class FeedbackRequest(BaseModel):
     feedback: int  # 1 = helpful, -1 = not helpful
 
 
+class AdviceFeedbackRequest(BaseModel):
+    """Rate a specific llm_advice row by its PK. Preferred over job-level feedback."""
+    feedback: int           # 1 = helpful, -1 = not helpful
+    note: Optional[str] = None
+
+
+class DispositionRequest(BaseModel):
+    """Record what the analyst did with the advice after reading it."""
+    disposition: str        # accepted | edited | rejected
+
+
 # ── P2: lifecycle transition ───────────────────────────────────────────────────
 
 class LifecycleTransition(BaseModel):
@@ -59,3 +70,10 @@ class RiskAcceptanceExpire(BaseModel):
 class WorkaroundCreate(BaseModel):
     control_description: str
     followup_date: Optional[str] = None     # ISO date string YYYY-MM-DD
+
+
+# ── Custom SLA override ───────────────────────────────────────────────────────
+
+class SlaOverrideUpdate(BaseModel):
+    sla_override_days: Optional[int] = Field(None, ge=1, le=3650, description="Custom SLA in days (null to clear)")
+    comment: Optional[str] = None

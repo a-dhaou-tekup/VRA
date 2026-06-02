@@ -29,7 +29,7 @@ from api.services.upload_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/findings", tags=["Findings"])
+router = APIRouter(tags=["Findings"])
 
 _WRITERS = ("analyst", "remediation_owner", "admin")
 
@@ -74,7 +74,7 @@ class ManualBatch(BaseModel):
 _WRITERS = ("analyst", "remediation_owner", "admin")
 
 
-@router.post("/manual", status_code=status.HTTP_201_CREATED)
+@router.post("/api/findings/manual", status_code=status.HTTP_201_CREATED)
 def submit_manual_findings(
     payload:          ManualBatch,
     background_tasks: BackgroundTasks,
@@ -159,7 +159,7 @@ def submit_manual_findings(
 
 # ── Findings list (with auto_triage join) ─────────────────────────────────────
 
-@router.get("")
+@router.get("/api/findings/")
 def list_findings(
     limit:  int = Query(50, ge=1, le=500),
     offset: int = Query(0,  ge=0),
@@ -202,7 +202,7 @@ def list_findings(
 
 # ── Auto-triage endpoints ──────────────────────────────────────────────────────
 
-@router.post("/{finding_id}/auto-triage", status_code=status.HTTP_200_OK)
+@router.post("/api/findings/{finding_id}/auto-triage", status_code=status.HTTP_200_OK)
 def trigger_auto_triage(
     finding_id: str,
     force: bool = Query(False, description="Overwrite even if analyst has acted"),
@@ -231,7 +231,7 @@ def trigger_auto_triage(
     return {"data": result}
 
 
-@router.get("/{finding_id}/auto-triage")
+@router.get("/api/findings/{finding_id}/auto-triage")
 def get_auto_triage(
     finding_id: str,
     conn:       sqlite3.Connection = Depends(get_db),
@@ -250,7 +250,7 @@ def get_auto_triage(
     return {"data": dict(row)}
 
 
-@router.get("/manual/example")
+@router.get("/api/findings/manual/example")
 def get_example_payload():
     """Return a real-CVE example payload showing the correct shape.
 

@@ -89,9 +89,9 @@ def write_kev_to_rag_corpus(cve_id: str, entry: dict) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def fetch_and_cache_kev() -> int:
+def fetch_and_cache_kev(force: bool = False) -> int:
     conn = _get_conn()
-    if not _is_stale(conn):
+    if not force and not _is_stale(conn):
         count = conn.execute("SELECT COUNT(*) FROM cve_context WHERE kev_flag=1").fetchone()[0]
         logger.info("KEV cache is fresh (%d entries). Skipping fetch.", count)
         conn.close()

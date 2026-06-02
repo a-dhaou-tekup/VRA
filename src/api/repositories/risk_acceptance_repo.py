@@ -45,7 +45,10 @@ def get_by_job(conn: sqlite3.Connection, job_id: str) -> list[dict]:
 def get_all_active(conn: sqlite3.Connection) -> list[dict]:
     """Return all active acceptances across all jobs (for the Risk Register)."""
     rows = conn.execute(
-        """SELECT ra.*, j.main_product, j.max_risk_level, j.status AS job_status
+        """SELECT ra.*,
+                  j.main_product, j.max_risk_level, j.status AS job_status,
+                  j.asset_ids, j.cve_list, j.risk_score_max,
+                  j.created_at AS job_created_at
            FROM risk_acceptances ra
            JOIN jobs j ON j.job_id = ra.job_id
            WHERE ra.status = 'active'

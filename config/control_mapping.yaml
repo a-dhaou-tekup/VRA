@@ -1,0 +1,358 @@
+# Compliance control mapping — loaded into control_catalog on startup.
+# Each control belongs to exactly one framework: ISO27001 | CIS | CSF.
+# vra_features: raw DB feature keys executed by compliance_service.EVIDENCE_QUERIES.
+# is_supporting: true -> status is always "supporting" (organisational control).
+
+controls:
+
+  # ── ISO 27001:2022 ──────────────────────────────────────────────────────────
+
+  - id: ISO-A.8.1
+    framework: ISO27001
+    name: "Asset Inventory & Classification"
+    description: >
+      Maintain an accurate inventory of all information assets,
+      each assigned an owner, criticality, and environment tag.
+    objective: >
+      Every asset identifiable in VRA carries a criticality level
+      so that vulnerability jobs can be scoped and prioritised correctly.
+    vra_features: [assets_total, assets_classified]
+    deep_links:
+      - label: "Asset Inventory"
+        path: "/assets"
+    is_supporting: false
+
+  - id: ISO-A.8.8
+    framework: ISO27001
+    name: "Management of Technical Vulnerabilities"
+    description: >
+      Obtain timely information about technical vulnerabilities,
+      evaluate exposure, and take appropriate action.
+    objective: >
+      VRA ingests scanner exports, enriches with KEV/EPSS/NVD,
+      and generates remediation jobs with SLA deadlines.
+    vra_features: [uploads_count, jobs_total]
+    deep_links:
+      - label: "Scan Uploads"
+        path: "/upload"
+      - label: "Remediation Jobs"
+        path: "/jobs"
+    is_supporting: false
+
+  - id: ISO-A.5.26
+    framework: ISO27001
+    name: "Response to Information Security Incidents"
+    description: >
+      Respond to information security incidents in accordance with
+      documented procedures; maintain a complete audit trail.
+    objective: >
+      All job lifecycle state changes are logged as job_events
+      with actor, timestamp, and comment.
+    vra_features: [audit_events_count]
+    deep_links:
+      - label: "Job Events"
+        path: "/jobs"
+    is_supporting: false
+
+  - id: ISO-A.5.24
+    framework: ISO27001
+    name: "Information Security Incident Management — Ticketing"
+    description: >
+      Integrate vulnerability remediation with the IT service-management
+      platform so that every job has a traceable ticket.
+    objective: >
+      Ticket links are created in VRA and synchronised with external
+      ITSM tools (Jira/ServiceNow) for end-to-end traceability.
+    vra_features: [ticket_links_count, jobs_total]
+    deep_links:
+      - label: "Tickets"
+        path: "/tickets"
+    is_supporting: false
+
+  - id: ISO-A.8.9
+    framework: ISO27001
+    name: "Configuration Management — Software Inventory"
+    description: >
+      Maintain a verified inventory of installed software so that
+      vulnerable versions can be identified and targeted.
+    objective: >
+      VRA's asset-software table tracks installed products/versions;
+      CPE-CVE matching surfaces relevant threat alerts per asset.
+    vra_features: [software_records_count, assets_total]
+    deep_links:
+      - label: "Assets"
+        path: "/assets"
+    is_supporting: false
+
+  - id: ISO-A.5.10
+    framework: ISO27001
+    name: "Acceptable Use & Risk Acceptance"
+    description: >
+      Formally document accepted risks, compensating controls, and
+      workarounds when full remediation is not immediately possible.
+    objective: >
+      VRA records risk acceptances with justification, expiry date,
+      and approver, and tracks compensating workarounds.
+    vra_features: [risk_acceptances_count, ticket_links_count, jobs_total]
+    deep_links:
+      - label: "Job Detail — Risk Acceptance"
+        path: "/jobs"
+    is_supporting: false
+
+  - id: ISO-A.5.35
+    framework: ISO27001
+    name: "Independent Review — AI-Assisted Recommendations"
+    description: >
+      Obtain expert or tool-assisted review of vulnerability remediation
+      plans to improve quality and coverage.
+    objective: >
+      VRA's RAG engine (Qwen2.5-14B + ChromaDB) generates structured
+      remediation recommendations for each job and records them with
+      model provenance and analyst feedback.
+    vra_features: [ai_advice_count, jobs_total]
+    deep_links:
+      - label: "AI Recommendations"
+        path: "/jobs"
+    is_supporting: false
+
+  - id: ISO-A.5.29
+    framework: ISO27001
+    name: "Information Security During Disruption"
+    description: >
+      Maintain information security at an appropriate level during
+      adverse situations such as a crisis or disaster.
+    objective: >
+      Organisational business-continuity and disaster-recovery plans
+      are maintained outside VRA; VRA provides supporting evidence
+      through its SLA tracking and job-audit trail.
+    vra_features: []
+    deep_links: []
+    is_supporting: true
+
+  # ── CIS Controls v8 ─────────────────────────────────────────────────────────
+
+  - id: CIS-1
+    framework: CIS
+    name: "Inventory and Control of Enterprise Assets"
+    description: >
+      Actively manage all enterprise assets connected to the
+      infrastructure to ensure only authorised devices are tracked.
+    objective: >
+      VRA maintains a classified asset inventory with internet-exposure
+      flags, criticality, environment, and owner attributes.
+    vra_features: [assets_total, internet_exposed_count]
+    deep_links:
+      - label: "Asset Inventory"
+        path: "/assets"
+    is_supporting: false
+
+  - id: CIS-7
+    framework: CIS
+    name: "Continuous Vulnerability Management"
+    description: >
+      Continuously acquire, assess, and take action on new information
+      to identify and remediate vulnerabilities.
+    objective: >
+      VRA ingests CISA KEV, EPSS, and NVD feeds and cross-references
+      them with the asset and software inventory to surface threat alerts.
+    vra_features: [kev_jobs_count, threat_alerts_count]
+    deep_links:
+      - label: "Enrichment"
+        path: "/enrichment"
+      - label: "Threat Alerts"
+        path: "/assets"
+    is_supporting: false
+
+  - id: CIS-17
+    framework: CIS
+    name: "Incident Response Management"
+    description: >
+      Establish a programme to develop and maintain an incident
+      response capability to prepare, detect, and quickly respond.
+    objective: >
+      VRA provides a full lifecycle audit trail (job_events) with
+      actor, timestamp, old/new status, and free-text comment.
+    vra_features: [audit_events_count]
+    deep_links:
+      - label: "Job Lifecycle Events"
+        path: "/jobs"
+    is_supporting: false
+
+  - id: CIS-2
+    framework: CIS
+    name: "Inventory and Control of Software Assets"
+    description: >
+      Actively manage all software on the network to ensure only
+      authorised software is installed and running.
+    objective: >
+      VRA's asset_software table and CPE-CVE cache track installed
+      product/version pairs; low coverage indicates a data-quality gap.
+    vra_features: [software_records_count, assets_total]
+    deep_links:
+      - label: "Assets — Software Tab"
+        path: "/assets"
+    is_supporting: false
+
+  - id: CIS-5
+    framework: CIS
+    name: "Account Management"
+    description: >
+      Use processes and tools to assign and manage authorisation to
+      credentials for user accounts, including administrator accounts.
+    objective: >
+      VRA enforces role-based access control across five distinct roles
+      (admin, analyst, remediation_owner, risk_owner, auditor) with
+      JWT-authenticated sessions and write-protection via API key.
+    vra_features: [users_count, audit_events_count]
+    deep_links:
+      - label: "Users (Admin)"
+        path: "/admin/users"
+    is_supporting: false
+
+  - id: CIS-6
+    framework: CIS
+    name: "Access Control Management"
+    description: >
+      Use processes and tools to create, assign, manage, and revoke
+      access credentials and privileges for user and admin accounts.
+    objective: >
+      VRA enforces ticket-linked workflow controls so that remediation
+      actions are traceable to authorised users via ITSM integration.
+    vra_features: [ticket_links_count, jobs_total, users_count]
+    deep_links:
+      - label: "Tickets"
+        path: "/tickets"
+    is_supporting: false
+
+  - id: CIS-13
+    framework: CIS
+    name: "Network Monitoring and Defense"
+    description: >
+      Operate processes and tooling to establish and maintain
+      comprehensive network monitoring and defence against threats.
+    objective: >
+      VRA's threat-alert engine correlates asset CPEs against NVD/KEV
+      to surface active exploitation signals; remediation-rate measures
+      how quickly detected threats are closed.
+    vra_features: [threat_alerts_count, done_jobs_count, jobs_total]
+    deep_links:
+      - label: "Threat Alerts"
+        path: "/assets"
+      - label: "Metrics"
+        path: "/metrics"
+    is_supporting: false
+
+  - id: CIS-18
+    framework: CIS
+    name: "Penetration Testing"
+    description: >
+      Test the effectiveness of defences by simulating the actions
+      of an attacker and remediating identified findings.
+    objective: >
+      Penetration testing is an organisational activity; VRA provides
+      supporting evidence by tracking discovered vulnerabilities and
+      their remediation status.
+    vra_features: []
+    deep_links: []
+    is_supporting: true
+
+  # ── NIST Cybersecurity Framework 2.0 ────────────────────────────────────────
+
+  - id: CSF-ID.AM
+    framework: CSF
+    name: "Identify — Asset Management"
+    description: >
+      The data, personnel, devices, systems, and facilities that enable
+      the organisation to achieve business purposes are identified.
+    objective: >
+      VRA's asset inventory with criticality, environment, internet-
+      exposure, and owning-team attributes satisfies the Identify
+      function's asset-management outcome.
+    vra_features: [assets_total, assets_classified]
+    deep_links:
+      - label: "Asset Inventory"
+        path: "/assets"
+    is_supporting: false
+
+  - id: CSF-PR.IP
+    framework: CSF
+    name: "Protect — Information Protection Processes & Procedures"
+    description: >
+      Security policies, processes, and procedures are maintained and
+      used to manage protection of information systems and assets.
+    objective: >
+      VRA configures SLA deadlines for every remediation job based on
+      risk level and business context, enforcing the organisation's
+      patching policy automatically.
+    vra_features: [sla_jobs_count, jobs_total]
+    deep_links:
+      - label: "Jobs — SLA"
+        path: "/jobs"
+      - label: "Metrics"
+        path: "/metrics"
+    is_supporting: false
+
+  - id: CSF-DE.CM
+    framework: CSF
+    name: "Detect — Security Continuous Monitoring"
+    description: >
+      The information system and assets are monitored to identify
+      cybersecurity events and verify the effectiveness of controls.
+    objective: >
+      VRA continuously correlates asset CPEs against threat feeds;
+      the remediation rate measures how quickly detected threats are
+      resolved.
+    vra_features: [threat_alerts_count, done_jobs_count, jobs_total]
+    deep_links:
+      - label: "Threat Alerts"
+        path: "/assets"
+      - label: "Metrics"
+        path: "/metrics"
+    is_supporting: false
+
+  - id: CSF-RS.MI
+    framework: CSF
+    name: "Respond — Incident Mitigation"
+    description: >
+      Activities are performed to prevent expansion of an event,
+      mitigate its effects, and resolve the incident.
+    objective: >
+      VRA tracks job remediation-rate (done/closed vs. total);
+      the 80% threshold signals effective incident mitigation.
+    vra_features: [done_jobs_count, jobs_total]
+    deep_links:
+      - label: "Jobs"
+        path: "/jobs"
+      - label: "Metrics"
+        path: "/metrics"
+    is_supporting: false
+
+  - id: CSF-RC.RP
+    framework: CSF
+    name: "Recover — Recovery Planning"
+    description: >
+      Recovery processes and procedures are executed and maintained to
+      ensure timely restoration of systems or assets affected by events.
+    objective: >
+      VRA records compensating workarounds (with follow-up dates) when
+      immediate remediation is not possible, supporting structured
+      recovery planning.
+    vra_features: [workaround_records_count, done_jobs_count, jobs_total]
+    deep_links:
+      - label: "Job Detail — Workarounds"
+        path: "/jobs"
+    is_supporting: false
+
+  - id: CSF-GV.OC
+    framework: CSF
+    name: "Govern — Organisational Context"
+    description: >
+      The organisation's mission, stakeholder expectations, and legal,
+      regulatory, and contractual requirements are understood.
+    objective: >
+      Organisational governance and regulatory context are established
+      outside VRA; VRA provides supporting evidence through its
+      risk-scored, SLA-bound job pipeline.
+    vra_features: []
+    deep_links: []
+    is_supporting: true

@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   PieChart, Pie, Cell,
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
-import { fetchMetricsOverview, fetchRescanStatus } from '../api/client'
+import {
+  fetchMetricsOverview, fetchRescanStatus,
+  createExecReport, listExecReports, getExecReport, downloadExecReport,
+} from '../api/client'
 import RiskBadge from '../components/RiskBadge'
 import StatusBadge from '../components/StatusBadge'
 
@@ -66,6 +69,19 @@ export default function Overview() {
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState(null)
 
+  // ── Executive report state ────────────────────────────────────────────────
+  const [reports,        setReports]        = useState([])
+  const [reportGenerating, setReportGenerating] = useState(false)
+  const [pendingReportId,  setPendingReportId]  = useState(null)
+  const [reportError,    setReportError]    = useState(null)
+  const pollRef = useRef(null)
+
+  const loadReports = useCallback(() => {
+    listExecReports({ limit: 10 })
+      .then(r => setReports(r.data?.data ?? []))
+      .catch(() => {}) // non-fatal
+  }, [])
+
   useEffect(() => {
     Promise.all([fetchMetricsOverview(), fetchRescanStatus()])
       .then(([metricsRes, rescanRes]) => {
@@ -74,7 +90,44 @@ export default function Overview() {
       })
       .catch((err) => setError(err.message || 'Failed to load overview'))
       .finally(() => setLoading(false))
-  }, [])
+    loadReports()
+  }, [loadReports])
+
+  // Poll pending report until done/failed
+  useEffect(() => {
+    if (!pendingReportId) return
+    pollRef.current = setInterval(() => {
+      getExecReport(pendingReportId)
+        .then(r => {
+          const report = r.data?.data
+          if (report?.status === 'done' || report?.status === 'failed') {
+            clearInterval(pollRef.current)
+            setReportGenerating(false)
+            setPendingReportId(null)
+            if (report.status === 'failed') {
+              setReportError(report.error_message || 'Report generation failed.')
+            }
+            loadReports()
+          }
+        })
+        .catch(() => {})
+    }, 3000)
+    return () => clearInterval(pollRef.current)
+  }, [pendingReportId, loadReports])
+
+  const handleGenerateReport = () => {
+    setReportError(null)
+    setReportGenerating(true)
+    createExecReport({ period_days: 7 })
+      .then(r => {
+        const id = r.data?.data?.id
+        if (id) setPendingReportId(id)
+      })
+      .catch(e => {
+        setReportGenerating(false)
+        setReportError(e.response?.data?.detail || e.message || 'Failed to start report')
+      })
+  }
 
   if (loading) return <Spinner />
   if (error) return (
@@ -111,23 +164,62 @@ export default function Overview() {
             Real-time vulnerability remediation overview
           </p>
         </div>
-        {resurfaced > 0 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '8px 14px', borderRadius: 8,
-            background: 'rgba(224,82,82,0.08)',
-            border: '1px solid rgba(224,82,82,0.28)',
-            color: 'var(--red)', fontSize: 13, fontWeight: 500,
-          }}>
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%',
-              background: 'var(--red)', display: 'inline-block',
-              animation: 'pulse 1.5s infinite',
-            }} />
-            {resurfaced} job{resurfaced !== 1 ? 's' : ''} resurfaced
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {resurfaced > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '8px 14px', borderRadius: 8,
+              background: 'rgba(224,82,82,0.08)',
+              border: '1px solid rgba(224,82,82,0.28)',
+              color: 'var(--red)', fontSize: 13, fontWeight: 500,
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: 'var(--red)', display: 'inline-block',
+                animation: 'pulse 1.5s infinite',
+              }} />
+              {resurfaced} job{resurfaced !== 1 ? 's' : ''} resurfaced
+            </div>
+          )}
+          {/* Executive report button */}
+          <button
+            onClick={handleGenerateReport}
+            disabled={reportGenerating}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              padding: '8px 16px', borderRadius: 8, border: 'none',
+              background: reportGenerating ? 'var(--surface-2)' : 'var(--amber)',
+              color: reportGenerating ? 'var(--muted)' : '#0f1118',
+              fontWeight: 600, fontSize: 12, cursor: reportGenerating ? 'not-allowed' : 'pointer',
+              transition: 'background 0.15s',
+            }}
+          >
+            {reportGenerating ? (
+              <>
+                <span style={{
+                  width: 12, height: 12, borderRadius: '50%',
+                  border: '2px solid var(--border-2)', borderTopColor: 'var(--amber)',
+                  display: 'inline-block', animation: 'spin 0.8s linear infinite',
+                }} />
+                Generating…
+              </>
+            ) : (
+              <>📄 Executive Report</>
+            )}
+          </button>
+        </div>
       </div>
+
+      {/* Report error banner */}
+      {reportError && (
+        <div style={{
+          padding: '10px 16px', borderRadius: 8,
+          background: 'rgba(224,82,82,0.08)', border: '1px solid rgba(224,82,82,0.3)',
+          color: 'var(--red)', fontSize: 13,
+        }}>
+          ⚠ {reportError}
+        </div>
+      )}
 
       {/* KPI strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
@@ -290,6 +382,112 @@ export default function Overview() {
                   </td>
                   <td style={{ padding: '11px 20px' }}>
                     <StatusBadge status={job.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Past executive reports */}
+      <div className="vra-card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{
+          padding: '16px 20px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div className="mono-label">Executive Reports</div>
+          <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: '"IBM Plex Mono", monospace' }}>
+            {reports.length} report{reports.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {reports.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--muted)', fontSize: 13 }}>
+            No reports yet — click "📄 Executive Report" to generate the first one.
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                {['Created', 'Period', 'By', 'Source', 'Status', ''].map(h => (
+                  <th key={h} style={{
+                    textAlign: 'left', padding: '10px 20px',
+                    fontFamily: '"IBM Plex Mono", monospace', fontSize: 9,
+                    letterSpacing: '0.12em', textTransform: 'uppercase',
+                    color: 'var(--muted)', fontWeight: 500,
+                  }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {reports.map((r, i) => (
+                <tr key={r.id} style={{
+                  borderBottom: i < reports.length - 1 ? '1px solid var(--border)' : 'none',
+                }}>
+                  <td style={{ padding: '10px 20px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: 'var(--muted)' }}>
+                    {r.created_at?.slice(0, 16).replace('T', ' ')}
+                  </td>
+                  <td style={{ padding: '10px 20px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 11 }}>
+                    {r.period_start} → {r.period_end}
+                  </td>
+                  <td style={{ padding: '10px 20px', color: 'var(--text)' }}>{r.created_by}</td>
+                  <td style={{ padding: '10px 20px' }}>
+                    {r.summary_source ? (
+                      <span style={{
+                        padding: '2px 7px', borderRadius: 4, fontSize: 10,
+                        fontFamily: '"IBM Plex Mono", monospace', fontWeight: 600,
+                        background: r.summary_source === 'llm'
+                          ? 'rgba(78,175,124,0.12)' : 'rgba(78,143,175,0.12)',
+                        color: r.summary_source === 'llm' ? 'var(--green)' : '#4e8faf',
+                        border: `1px solid ${r.summary_source === 'llm'
+                          ? 'rgba(78,175,124,0.3)' : 'rgba(78,143,175,0.3)'}`,
+                      }}>
+                        {r.summary_source}
+                      </span>
+                    ) : '—'}
+                  </td>
+                  <td style={{ padding: '10px 20px' }}>
+                    <span style={{
+                      padding: '2px 7px', borderRadius: 4, fontSize: 10,
+                      fontFamily: '"IBM Plex Mono", monospace', fontWeight: 600,
+                      background: r.status === 'done'
+                        ? 'rgba(78,175,124,0.12)'
+                        : r.status === 'failed' ? 'rgba(224,82,82,0.1)' : 'rgba(245,166,35,0.1)',
+                      color: r.status === 'done' ? 'var(--green)'
+                        : r.status === 'failed' ? 'var(--red)' : 'var(--amber)',
+                    }}>
+                      {r.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: '10px 20px' }}>
+                    {r.status === 'done' ? (
+                      <button
+                        onClick={() => downloadExecReport(r.id)}
+                        style={{
+                          fontFamily: '"IBM Plex Mono", monospace', fontSize: 11,
+                          color: 'var(--amber)', background: 'none',
+                          border: '1px solid rgba(245,166,35,0.4)',
+                          padding: '3px 10px', borderRadius: 4, cursor: 'pointer',
+                        }}
+                      >
+                        ↓ PDF
+                      </button>
+                    ) : r.status === 'failed' ? (
+                      <span title={r.error_message}
+                        style={{ fontSize: 11, color: 'var(--red)', cursor: 'help' }}>
+                        ✕ error
+                      </span>
+                    ) : (
+                      <span style={{
+                        display: 'inline-block', width: 12, height: 12, borderRadius: '50%',
+                        border: '2px solid var(--border-2)', borderTopColor: 'var(--amber)',
+                        animation: 'spin 0.8s linear infinite',
+                      }} />
+                    )}
                   </td>
                 </tr>
               ))}

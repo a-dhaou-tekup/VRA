@@ -46,7 +46,7 @@ STATUS_TRANSITIONS: dict[str, set[str]] = {
     "FALSE_POSITIVE":       {"TO_DO"},
     "DEFERRED":             {"IN_PROGRESS", "RISK_ACCEPTED"},
     "VERIFIED":             {"CLOSED"},
-    "CLOSED":               set(),          # terminal
+    "CLOSED":               {"RESURFACED"},  # can reopen via RESURFACED
     "RESURFACED":           {"TO_DO", "IN_PROGRESS"},
 }
 

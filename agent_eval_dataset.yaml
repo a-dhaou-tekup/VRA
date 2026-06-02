@@ -1,0 +1,174 @@
+# =============================================================================
+#  VRA Agent Evaluation Dataset (TEMPLATE / starter set)
+#  This is the GOLD set used to measure the tool-calling chatbot. It is NOT
+#  training data — the agent is not fine-tuned. Write it FIRST: enumerating the
+#  questions defines exactly which tools the agent must expose.
+#
+#  Expand this starter set to ~60-120 items before the formal evaluation.
+#  Balance the four buckets (lookup / advice / compliance / multi).
+#
+#  Per item:
+#    id              unique
+#    question        the user's natural-language question
+#    type            lookup | advice | compliance | multi
+#    expected_tools  the tool(s) a correct agent should call (order-insensitive)
+#    expected_args   (optional) key args the call should contain
+#    answer_match    (optional, for lookups) how to check the final answer:
+#                      {mode: numeric|contains|regex, value: ...}
+#                      For DYNAMIC values, either freeze a seeded demo DB and fill
+#                      the value, or omit and score tool-selection only.
+#    reference       (advice/compliance) a short reference answer / key points,
+#                    used by RAGAS answer-correctness and the LLM-judge rubric.
+#    notes           rationale / what this item probes
+#
+#  Canonical read-only tools the agent may call (define these in Step 2):
+#    get_metrics, get_sla_compliance, list_jobs, get_job_detail, search_cves,
+#    get_enrichment_status, get_threat_alerts, get_risk_acceptances,
+#    query_controls, search_knowledge
+# =============================================================================
+
+items:
+
+  # ---------------------------------------------------------------- lookup
+  - id: L01
+    question: "How many remediation jobs are past their SLA?"
+    type: lookup
+    expected_tools: [get_sla_compliance]   # get_metrics also acceptable (has overdue_count); get_sla_compliance is primary
+    answer_match: {mode: numeric, value: null}   # fill from seeded DB or score tools only
+    notes: "Single KPI lookup; agent should not free-text guess a number."
+
+  - id: L02
+    question: "What's our current SLA compliance percentage?"
+    type: lookup
+    expected_tools: [get_sla_compliance]
+    answer_match: {mode: regex, value: '\d{1,3}\s?%'}
+    notes: "Must return a percentage sourced from the tool."
+
+  - id: L03
+    question: "Show me the critical jobs that are still open."
+    type: lookup
+    expected_tools: [list_jobs]
+    expected_args: {status: open, risk_level: CRITICAL}
+    notes: "Filtered list query; checks param construction."
+
+  - id: L04
+    question: "Is CVE-2024-3094 present anywhere in our environment?"
+    type: lookup
+    expected_tools: [search_cves]
+    expected_args: {cve_id: CVE-2024-3094}
+    notes: "Entity lookup; agent must extract the CVE id correctly."
+
+  - id: L05
+    question: "Is our EPSS enrichment up to date?"
+    type: lookup
+    expected_tools: [get_enrichment_status]
+    notes: "Status question about a feed."
+
+  - id: L06
+    question: "How many open risk acceptances have already expired?"
+    type: lookup
+    expected_tools: [get_risk_acceptances]
+    expected_args: {expired: true}
+    notes: "Register query with a filter."
+
+  - id: L07
+    question: "Give me the full detail for job JOB-0123."
+    type: lookup
+    expected_tools: [get_job_detail]
+    expected_args: {job_id: JOB-0123}
+    notes: "Single-record fetch by id."
+
+  - id: L08
+    question: "How many KEV findings are currently past SLA?"
+    type: lookup
+    expected_tools: [list_jobs]     # agent uses list_jobs(kev_only,past_sla); get_metrics.kev_past_sla also valid
+    notes: "Specific KPI (KEV-past-SLA) — must not conflate with total past-SLA."
+
+  - id: L09
+    question: "Are there any new threat alerts for our internet-facing assets?"
+    type: lookup
+    expected_tools: [get_threat_alerts]
+    notes: "Threat-exposure matching output."
+
+  # ---------------------------------------------------------------- advice
+  - id: A01
+    question: "We have limited capacity this sprint — how should we prioritize what to fix first?"
+    type: advice
+    expected_tools: [search_knowledge]
+    reference: >
+      Prioritize by contextual risk, not raw severity: actively exploited (KEV) and
+      high-EPSS vulnerabilities on internet-facing, business-critical assets first;
+      use the risk score to sequence; consider compensating controls where patching
+      is blocked.
+    notes: "Pure advice; must ground in the corpus, not invent."
+
+  - id: A02
+    question: "We can't patch a critical finding yet. What are reasonable compensating controls?"
+    type: advice
+    expected_tools: [search_knowledge]
+    reference: >
+      Examples: network segmentation / access restriction, WAF or virtual patching,
+      disabling the affected feature, increased monitoring/alerting, and a tracked
+      follow-up date. Record as a mitigation, distinct from a full patch.
+    notes: "Should connect to the mitigated vs patched distinction."
+
+  - id: A03
+    question: "How often should we re-scan our externally-exposed systems?"
+    type: advice
+    expected_tools: [search_knowledge]
+    reference: >
+      Externally-exposed assets warrant more frequent (e.g., at least weekly /
+      continuous where feasible) scanning than internal ones, aligned with CIS 7.6.
+    notes: "Advice that may reference a control."
+
+  # ---------------------------------------------------------------- compliance
+  - id: C01
+    question: "Which ISO 27001 controls does VRA give us evidence for?"
+    type: compliance
+    expected_tools: [query_controls]
+    expected_args: {framework: ISO27001}   # DB stores short key; was "ISO/IEC 27001:2022" (pre-build mismatch)
+    reference: >
+      Primarily A.8.8 (technical vulnerability management, full), plus partial/supporting
+      evidence for A.5.7, A.5.9, A.8.9, A.8.15, A.8.16, A.5.25, A.5.36. Evidence, not
+      certification.
+    notes: "Reads the control mapping; must include the evidence-not-certification caveat."
+
+  - id: C02
+    question: "What's our evidence for ISO A.8.8?"
+    type: compliance
+    expected_tools: [query_controls]
+    expected_args: {control_id: ISO-A.8.8}   # actual control_id in DB; was ISO-8.8 (pre-build mismatch)
+    reference: >
+      SLA-compliance reporting, MTTR, per-job lifecycle records, risk-based
+      prioritization, and re-scan verification.
+    notes: "Single-control evidence drill-in."
+
+  - id: C03
+    question: "Does our setup cover CIS Control 7?"
+    type: compliance
+    expected_tools: [query_controls]
+    expected_args: {control_id: CIS-7}
+    reference: >
+      Yes — full coverage: VRA implements a continuous vulnerability-management
+      process (identify, prioritize, remediate within SLA, re-validate).
+    notes: "Cross-framework lookup."
+
+  # ---------------------------------------------------------------- multi-tool
+  - id: M01
+    question: "Which of our past-SLA critical jobs involve actively-exploited CVEs, and what does best practice say about handling them?"
+    type: multi
+    expected_tools: [list_jobs, search_knowledge]
+    expected_args: {risk_level: CRITICAL, past_sla: true, kev_only: true}  # kev→kev_only (pre-build mismatch)
+    reference: >
+      List the matching jobs from the data, then advise treating KEV findings as
+      top priority with immediate remediation or compensating controls.
+    notes: "Combines a data query with grounded advice — the hardest bucket."
+
+  - id: M02
+    question: "What's our overall security posture right now, and where should we focus?"
+    type: multi
+    expected_tools: [get_metrics, search_knowledge]
+    reference: >
+      Summarize KPIs (open jobs, SLA breaches, KEV-past-SLA, backlog trend) from the
+      data, then recommend focusing on exploited, exposed, critical-asset findings.
+    notes: "Posture summary = data + interpretation."

@@ -1,0 +1,51 @@
+hostname,ip_address,business_unit,business_owner,criticality,internet_exposed,environment,os_version,site,owning_team
+web-prod-01,10.0.1.10,IT,Sophie Martin,critical,true,production,Ubuntu 22.04 LTS,DC-Paris,WebOps
+web-prod-02,10.0.1.11,IT,Sophie Martin,critical,true,production,Ubuntu 22.04 LTS,DC-Paris,WebOps
+web-prod-03,10.0.1.12,IT,Sophie Martin,high,true,production,Ubuntu 20.04 LTS,DC-Paris,WebOps
+db-prod-01,10.0.2.20,Finance,Karim Bouaziz,critical,false,production,Windows Server 2022,DC-Paris,DBA
+db-prod-02,10.0.2.21,Finance,Karim Bouaziz,critical,false,production,Windows Server 2022,DC-Paris,DBA
+db-staging-01,10.1.2.20,Finance,Karim Bouaziz,medium,false,staging,Windows Server 2019,DC-Lyon,DBA
+db-staging-02,10.1.2.21,IT,Nadia Fernandez,medium,false,staging,RHEL 9,DC-Lyon,DBA
+app-prod-01,10.0.3.30,IT,Lucas Dupont,high,false,production,Windows Server 2022,DC-Paris,SysAdmin
+app-prod-02,10.0.3.31,IT,Lucas Dupont,high,false,production,Windows Server 2022,DC-Paris,SysAdmin
+app-dev-01,10.2.3.30,DevOps,Youssef Amrani,low,false,dev,Ubuntu 22.04 LTS,Office-Tunis,DevOps
+app-dev-02,10.2.3.31,DevOps,Youssef Amrani,low,false,dev,Ubuntu 22.04 LTS,Office-Tunis,DevOps
+fw-dc-paris-01,10.0.0.1,Security,Isabelle Leclerc,critical,true,production,Palo Alto PAN-OS 11.x,DC-Paris,NetSec
+fw-dc-paris-02,10.0.0.2,Security,Isabelle Leclerc,critical,true,production,Palo Alto PAN-OS 11.x,DC-Paris,NetSec
+fw-dc-lyon-01,10.1.0.1,Security,Isabelle Leclerc,critical,true,production,Fortinet FortiOS 7.x,DC-Lyon,NetSec
+sw-core-01,10.0.0.10,IT,Marc Lefebvre,high,false,production,Cisco IOS XE,DC-Paris,NetSec
+sw-core-02,10.0.0.11,IT,Marc Lefebvre,high,false,production,Cisco IOS XE,DC-Paris,NetSec
+sw-access-01,10.1.0.10,IT,Marc Lefebvre,medium,false,production,Cisco NX-OS,DC-Lyon,NetSec
+mail-prod-01,10.0.4.40,IT,Sophie Martin,high,true,production,Windows Server 2022,DC-Paris,SysAdmin
+proxy-prod-01,10.0.4.41,Security,Isabelle Leclerc,high,true,production,Ubuntu 22.04 LTS,DC-Paris,NetSec
+vpn-prod-01,10.0.0.5,Security,Isabelle Leclerc,critical,true,production,Palo Alto PAN-OS 10.x,DC-Paris,NetSec
+laptop-smartin,192.168.10.15,IT,Sophie Martin,medium,false,production,Windows 11,Office-Tunis,SysAdmin
+laptop-kbouaziz,192.168.10.22,Finance,Karim Bouaziz,medium,false,production,Windows 11,HQ-London,FinanceIT
+laptop-lfernandez,192.168.10.30,HR,Nadia Fernandez,low,false,production,macOS Sonoma 14,HQ-London,SysAdmin
+laptop-ldupont,192.168.10.45,IT,Lucas Dupont,medium,false,production,Windows 11,DC-Paris,SysAdmin
+laptop-yamrani,192.168.10.51,DevOps,Youssef Amrani,medium,false,production,Ubuntu 22.04 LTS,Office-Tunis,DevOps
+ws-finance-01,192.168.20.10,Finance,Karim Bouaziz,high,false,production,Windows 11,HQ-London,FinanceIT
+ws-finance-02,192.168.20.11,Finance,Amina Chraibi,medium,false,production,Windows 10,HQ-London,FinanceIT
+ws-hr-01,192.168.30.10,HR,Nadia Fernandez,low,false,production,Windows 11,HQ-London,SysAdmin
+ws-legal-01,192.168.40.10,Legal,Pierre Moreau,medium,false,production,Windows 11,HQ-London,SysAdmin
+ws-mktg-01,192.168.50.10,Marketing,Laura Bianchi,low,false,production,macOS Ventura 13,Office-Tunis,SysAdmin
+k8s-node-01,10.0.5.10,DevOps,Youssef Amrani,high,false,production,Ubuntu 22.04 LTS,AWS-eu-west-1,CloudOps
+k8s-node-02,10.0.5.11,DevOps,Youssef Amrani,high,false,production,Ubuntu 22.04 LTS,AWS-eu-west-1,CloudOps
+k8s-node-03,10.0.5.12,DevOps,Youssef Amrani,high,false,production,Ubuntu 22.04 LTS,AWS-eu-west-1,CloudOps
+k8s-master-01,10.0.5.5,DevOps,Youssef Amrani,critical,false,production,Ubuntu 22.04 LTS,AWS-eu-west-1,CloudOps
+ci-runner-01,10.2.5.10,DevOps,Lucas Dupont,low,false,dev,Ubuntu 22.04 LTS,Office-Tunis,DevOps
+ci-runner-02,10.2.5.11,DevOps,Lucas Dupont,low,false,dev,Ubuntu 22.04 LTS,Office-Tunis,DevOps
+mon-prod-01,10.0.6.10,IT,Marc Lefebvre,high,false,production,RHEL 9,DC-Paris,SysAdmin
+log-prod-01,10.0.6.20,Security,Isabelle Leclerc,high,false,production,RHEL 9,DC-Paris,NetSec
+backup-prod-01,10.0.7.10,IT,Sophie Martin,high,false,production,Windows Server 2019,DC-Lyon,SysAdmin
+nas-prod-01,10.0.7.20,IT,Marc Lefebvre,critical,false,production,FreeBSD 14,DC-Paris,SysAdmin
+vm-dev-01,172.16.10.10,DevOps,Youssef Amrani,low,false,dev,Debian 12,Office-Tunis,DevOps
+vm-test-01,172.16.20.10,IT,Lucas Dupont,low,false,test,Ubuntu 20.04 LTS,AWS-eu-west-1,DevOps
+vm-test-02,172.16.20.11,IT,Lucas Dupont,low,false,test,Windows Server 2019,AWS-eu-west-1,DevOps
+vm-staging-01,172.16.30.10,IT,Sophie Martin,medium,false,staging,Ubuntu 22.04 LTS,DC-Lyon,WebOps
+vm-staging-02,172.16.30.11,Finance,Karim Bouaziz,medium,false,staging,RHEL 8,DC-Lyon,DBA
+api-prod-01,10.0.3.50,IT,Sophie Martin,high,true,production,Ubuntu 22.04 LTS,AWS-eu-west-1,WebOps
+api-prod-02,10.0.3.51,IT,Sophie Martin,high,true,production,Ubuntu 22.04 LTS,AWS-eu-west-1,WebOps
+cdn-edge-01,10.0.8.10,IT,Marc Lefebvre,high,true,production,Ubuntu 20.04 LTS,AWS-eu-west-1,WebOps
+siem-prod-01,10.0.9.10,Security,Isabelle Leclerc,critical,false,production,AlmaLinux 9,DC-Paris,NetSec
+jump-prod-01,10.0.0.20,Security,Isabelle Leclerc,critical,true,production,RHEL 9,DC-Paris,NetSec

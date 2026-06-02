@@ -332,11 +332,11 @@ export default function Findings() {
                 <tr
                   key={f.id}
                   style={{
+                    cursor: 'pointer',
                     borderBottom: i < visible.length - 1 ? '1px solid var(--border)' : 'none',
                     transition: 'background 0.1s',
                   }}
                   onClick={() => navigate(`/findings/${f.id}`)}
-                  style={{ cursor: 'pointer', borderBottom: i < visible.length - 1 ? '1px solid var(--border)' : 'none', transition: 'background 0.1s' }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-2)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >

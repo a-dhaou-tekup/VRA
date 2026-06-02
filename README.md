@@ -1,62 +1,71 @@
 # VRA — Vulnerability Remediation Assistant
 
-**Semi-Automated Vulnerability Remediation with Risk Scoring, SLA Tracking, Local AI, and Manual Upload**
+> **TEK-UP University · End-of-Study Project · 2025–2026**  
+> Hardware: RTX 4070 Ti Super (16 GB VRAM) · Ryzen 7600X · Windows
 
-> TEK-UP University · End-of-Study Project · 2025–2026
-> Hardware: RTX 4070 Ti Super (16 GB VRAM) · Ryzen 7600X
+Semi-automated vulnerability remediation platform: ingests scanner exports, enriches with live threat intelligence, scores with a transparent 5-factor risk model, groups findings into SLA-tracked remediation jobs, and serves a React dashboard backed by a fully local AI engine (Qwen2.5-14B via Ollama + RAG).
 
 ---
 
-## Overview
+## Feature Overview
 
-VRA takes vulnerability scan exports from Nessus/OpenVAS (or any CSV), enriches them with live threat intelligence (CISA KEV, FIRST EPSS, NVD), scores them using a transparent 5-factor risk formula, groups findings into actionable remediation jobs with SLA deadlines, and exposes a React dashboard with a local AI recommendation engine (Qwen2.5-14B via Ollama).
-
-### Key differentiators vs. basic vuln tools
-- **Manual upload UI** — drag-and-drop scan files directly from the browser; no CLI needed
-- **Local AI (on-prem)** — Qwen2.5-14B running on your GPU; no data leaves the machine
-- **RAG recommendations** — AI grounded in real advisory text (NVD + CISA KEV + vendor notes)
-- **Structured JSON output** — remediation_steps, compensating_controls, verification, confidence
-- **Re-scan detection** — auto-detects Fixed/Resurfaced jobs on each new scan import
-- **Full audit trail** — every status change, triage decision, AI call, and ticket logged
+| Capability | Detail |
+|---|---|
+| **Multi-format ingestion** | Nessus XML, OpenVAS XML, generic CSV; LLM parser for unknown vendor formats |
+| **Threat intelligence** | CISA KEV (7 d TTL), FIRST EPSS (30 d TTL), NVD API v2 |
+| **Risk scoring** | CVSS × 40 + KEV × 20 + EPSS × 15 + Criticality × 15 + Exposure × 10 (max 100) |
+| **Remediation jobs** | SHA-256 fingerprint, 8-state lifecycle, SLA deadlines, audit trail |
+| **Re-scan detection** | Auto-detects Fixed / Resurfaced on every new import |
+| **Local AI advice** | RAG over NVD + CISA + vendor runbooks; Qwen2.5-14B; structured JSON output |
+| **AI auto-triage** | Per-finding triage classification (valid / needs investigation / false positive) with confidence score |
+| **Chat with finding** | SSE-streamed conversational follow-up on any job; multi-turn memory |
+| **Knowledge graph** | NetworkX in-process graph: CVE → component → asset → owner → service; blast-radius BFS; graph+embedding similarity |
+| **Threat alerts** | CPE/KEV-driven alert generation per asset; dismissal / resolution workflow |
+| **Compliance mapping** | Control catalogue (NIST / ISO); tag jobs to controls; coverage dashboard |
+| **Risk register** | Risk acceptances with justification, compensating controls, expiry review |
+| **Executive PDF reports** | LLM-narrated 5-page PDF (cover + summary + KPI charts + top findings + glossary); template fallback; on-demand or scheduled |
+| **RBAC** | 5 roles: Admin, Analyst, Remediation Owner, Risk Owner, Auditor; JWT auth |
+| **Ticketing** | Jira + console providers; bidirectional status sync |
+| **Demo instance** | Isolated DB, zero pre-seeded data, separate ports — runs side-by-side with dev |
 
 ---
 
 ## Architecture
 
 ```
-Scanner files (Nessus XML / OpenVAS XML / CSV)
-         │
-         ▼
-  M1  Ingestion ─── adapter pattern (Nessus, OpenVAS, CSV-generic)
-         │
-         ▼
-  M2  Enrichment ── CISA KEV (7d TTL) · FIRST EPSS (30d TTL) · NVD API v2
-         │           └─ auto-writes .txt files to RAG corpus
-         ▼
-  M3  Risk Scoring ─ CVSS×40 + KEV×20 + EPSS×15 + Criticality×15 + Exposure×10
-         │
-         ▼
-  M4  Job Builder ── group by (asset, product) · SHA-256 fingerprint · SLA policy YAML
-         │
-         ├──────────────────────────────────────────────────────────┐
-         ▼                                                          ▼
-  M5  FastAPI ──── SQLite WAL mode                         M11 Manual Upload
-         │         Repos · Migrations                              │
-         │                                                   POST /api/uploads
-         ├── M6  Governance ── 8-state machine                     │
-         │       (TO_DO→IN_PROGRESS→DONE→                   auto-trigger pipeline
-         │        CLOSED/RESURFACED/RISK_ACCEPTED…)
-         │
-         ├── M7  Re-scan ──── fingerprint diff → RESURFACED/DONE
-         │
-         ├── M8  RAG ──────── ChromaDB + MiniLM embeddings
-         │                    Qwen2.5-14B via Ollama
-         │                    Structured JSON output
-         │
-         ├── M9  Dashboard ── React 18 + Tailwind
-         │                    6 pages incl. Upload page
-         │
-         └── M10 Ticketing ── Jira + Console providers
+Scanner files (Nessus XML / OpenVAS XML / CSV / unknown vendor)
+        │
+        ▼
+   Ingestion  ──  adapter pattern (Nessus · OpenVAS · CSV-generic · LLM parser)
+        │
+        ▼
+   Enrichment  ── CISA KEV · FIRST EPSS · NVD API v2  →  enrichment.db (cache)
+        │           └── auto-writes advisory .txt files to RAG corpus
+        ▼
+   Risk Scoring  ── 5-factor formula → risk_score [0–100] → CRITICAL/HIGH/MEDIUM/LOW
+        │
+        ▼
+   Job Builder  ── group by (asset, product) · SHA-256 fingerprint · SLA policy
+        │
+        ▼
+   FastAPI  ──────────────────────────────────────────────────────────────────┐
+        │                                                                     │
+        ├── Jobs & Lifecycle  (8-state machine + audit log)                   │
+        ├── Re-scan Detection (fingerprint diff → RESURFACED / DONE)          │
+        ├── Findings & Auto-Triage  (per-finding AI classification)           │
+        ├── RAG Recommendations  (ChromaDB + MiniLM + Qwen2.5-14B)           │
+        ├── Chat with Finding  (SSE stream · multi-turn · RAG-grounded)       │
+        ├── Knowledge Graph  (NetworkX · blast-radius BFS · embedding sim.)  │
+        ├── Threat Alerts  (CPE/KEV matching per asset)                       │
+        ├── Compliance  (control catalogue · job tagging · coverage)          │
+        ├── Risk Register  (acceptances · workarounds · lifecycle)            │
+        ├── Executive Reports  (LLM prose · matplotlib charts · fpdf2 PDF)   │
+        ├── Assets · Tickets · Users · Metrics · Enrichment · Uploads        │
+        │                                                                     │
+        └── SQLite WAL (platform.db)   +   enrichment.db                     │
+                                                                              │
+   React 18 SPA  ◄─────────────────────────────────────────────────────────┘
+   (16 pages · Tailwind · Recharts · React Router v6)
 ```
 
 ---
@@ -65,183 +74,235 @@ Scanner files (Nessus XML / OpenVAS XML / CSV)
 
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.11, FastAPI 0.111+, SQLite (WAL mode), raw sqlite3 |
-| AI | Ollama + Qwen2.5-14B Q5_K_M (~10 GB VRAM) |
-| RAG | ChromaDB, sentence-transformers (all-MiniLM-L6-v2) |
-| Frontend | React 18, Vite, Tailwind CSS, Recharts, React Router v6 |
-| Container | Docker + docker-compose (API + Ollama + React) |
+| **Backend** | Python 3.11+, FastAPI 0.111+, SQLite WAL, raw sqlite3, repository pattern |
+| **AI / LLM** | Ollama + Qwen2.5-14B (~10 GB VRAM on RTX 4070 Ti Super) |
+| **RAG** | ChromaDB, sentence-transformers `all-MiniLM-L6-v2`, hybrid retrieval + cross-encoder reranker |
+| **Graph** | NetworkX (in-process DiGraph, no Neo4j) |
+| **PDF** | fpdf2 (pure Python, no system libs) + matplotlib (KPI charts) |
+| **Auth** | JWT (python-jose) + bcrypt; OAuth2 password flow |
+| **Frontend** | React 18, Vite 5, Tailwind CSS, Recharts, React Router v6, Axios |
+| **Ticketing** | Jira REST API + console provider |
 
 ---
 
-## Quick Start (Local Dev)
+## Quick Start
 
 ### Prerequisites
-- Python 3.11, Node.js 20+
-- [Ollama](https://ollama.com) installed
-- RTX 4070 Ti Super (or compatible NVIDIA GPU with 10+ GB VRAM)
+
+- Python 3.11 or 3.14, Node.js 20+
+- [Ollama](https://ollama.com) installed and `ollama serve` running
+- NVIDIA GPU with ≥ 10 GB VRAM (RTX 3080 / 4070 Ti Super or better)
+
+### Development instance (with seeded sample data)
 
 ```bash
-# 1. Clone and navigate
-cd "PFE 2/vra"
-
-# 2. Python environment
+# 1. From the project root
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 
-# 3. Copy and configure environment
-cp .env.example .env
-# Edit .env — set API_KEY, adjust OLLAMA_MODEL if needed
+# 2. Environment
+cp .env.example .env            # set API_KEY if needed
 
-# 4. Pull the AI model (~10 GB download)
+# 3. Pull the model (~9 GB first time)
 ollama pull qwen2.5:14b
 
-# 5. Generate sample data (no real scanner needed)
-python scripts/generate_sample_data.py
-
-# 6. Run the data pipeline
-cd src/ingestion  && python build_vuln_raw.py && cd ../..
-cd src/enrichment && python build_vuln_enriched.py && cd ../..
-cd src/remediation && python build_remediation_jobs.py && cd ../..
-
-# 7. Fetch CISA advisories + index RAG corpus (~5 min first time)
-python scripts/fetch_cisa_advisories.py
+# 4. Index the RAG corpus (run once; ~5 min)
 python scripts/index_rag_corpus.py
 
-# 8. Start the API
-python run_api.py
-# → http://localhost:8000
-# → http://localhost:8000/docs
-
-# 9. Start the frontend (new terminal)
-cd frontend
-npm install
-npm run dev
-# → http://localhost:5173
-
-# 10. Start Ollama (new terminal)
-ollama serve
+# 5. Launch everything
+start.bat                       # opens Ollama · Backend :8000 · Frontend :5173
 ```
 
----
+`start.bat` seeds a full set of demo jobs, assets, and users automatically.
 
-## Docker (Demo)
+### Demo instance (clean — upload your own data)
 
 ```bash
-cp .env.example .env  # set API_KEY
-docker-compose up -d
-
-# First run: pull the model inside the container
-docker-compose exec ollama ollama pull qwen2.5:14b
+start_demo.bat                  # Backend :8001 · Frontend :5174 · fresh demo.db
 ```
 
-Services:
-- API: http://localhost:8000
-- Frontend: http://localhost:3000
-- Ollama: http://localhost:11434
+The demo instance shares the KEV/EPSS/NVD enrichment cache and the RAG corpus with the dev instance; both can run simultaneously.
+
+**Demo credentials (both instances):**
+
+| Username | Password | Role |
+|---|---|---|
+| `admin` | `Admin1234!` | Administrator |
+| `analyst` | `Analyst1234!` | Security Analyst |
+| `remediation_owner` | `RemOwner1234!` | Remediation Owner |
+| `risk_owner` | `RiskOwner1234!` | Risk Owner |
+| `auditor` | `Auditor1234!` | Auditor (read-only) |
 
 ---
 
-## Modules
+## Demo Script (10-minute defence)
 
-### M1 — Ingestion (`src/ingestion/`)
-- `adapters/nessus.py` — Nessus XML (`.nessus`) parser
-- `adapters/openvas.py` — OpenVAS/Greenbone XML parser
-- `adapters/csv_generic.py` — Any CSV with CVE/hostname/CVSS columns
-- `build_vuln_raw.py` — Auto-detects file format, merges with asset inventory → `vuln_raw.csv`
+| Step | Action | What to show |
+|---|---|---|
+| 1 | Upload `data/input/scanner_demo1.csv` | LLM parser maps unknown "RiskTrack Enterprise v3.2" columns to VRA schema |
+| 2 | Findings page | AI-triage column: confidence pills; enable FP filter → SWEET32 / POODLE / RC4 disappear |
+| 3 | Open Log4Shell on `prod-api-01` | Grounded advice with `[cve_descriptions:…]` and `[vendor_advisories:…]` citations |
+| 4 | Chat panel | Ask *"does this fix apply on RHEL 9?"* → RAG-grounded follow-up |
+| 5 | Blast Radius tab | `prod-api-01 → prod-db-primary-01 → prod-redis-01`; click a node for details |
+| 6 | Overview → 📄 Executive Report | Live PDF generation; flip through cover / summary / KPI charts / top-10 / glossary |
 
-### M2 — Enrichment (`src/enrichment/`)
-- `kev_ingest.py` — CISA KEV feed, 7-day cache, writes RAG corpus files
-- `epss_ingest.py` — FIRST EPSS API, 30-day cache, batched requests
-- `nvd_ingest.py` — NVD API v2 descriptions + CWE, writes RAG corpus files
-- `build_vuln_enriched.py` — Orchestrates all enrichment → `vuln_enriched.csv`
+Demo data files:
+- `data/input/assets_demo1.csv` — 25 assets, 5 business units, mixed criticality
+- `data/input/scanner_demo1.csv` — 55 findings across 23 hosts (22 CRITICAL, 24 HIGH, 9 FP-targets)
 
-### M3 — Risk Scoring (`src/enrichment/score_engine.py`)
-```
-Risk Score = (CVSS/10 × 40) + (KEV × 20) + (EPSS × 15) + (criticality_mult × 15) + (exposed × 10)
-Max = 100 | CRITICAL ≥ 80 | HIGH ≥ 60 | MEDIUM ≥ 40 | LOW < 40
-```
+---
 
-### M4 — Job Builder (`src/remediation/build_remediation_jobs.py`)
-- Groups by `(asset_id, product)`, computes SHA-256 fingerprint
-- Assigns SLA: Critical=7d, High=14d, Medium=30d, Low=90d
-- Outputs `remediation_jobs.csv`
+## Frontend Pages
 
-### M5-M10 — API Layer (`src/api/`)
-- **M5** FastAPI + SQLite WAL + full repository pattern
-- **M6** 8-state machine: TO_DO → IN_PROGRESS → DONE → CLOSED (+ RESURFACED, RISK_ACCEPTED, DEFERRED, FALSE_POSITIVE)
-- **M7** Re-scan detection via SHA-256 job fingerprint diffing
-- **M8** RAG: ChromaDB + MiniLM + Qwen2.5-14B + structured JSON output + LLM cache + feedback
-- **M9** React 18 dashboard (6 pages)
-- **M10** Jira + Console ticket providers
-
-### M11 — Manual Upload (NEW) (`src/api/routers/uploads.py` + `services/upload_service.py`)
-- `POST /api/uploads` — multipart file upload (supports .nessus, .xml, .csv)
-- Auto-detects scanner format, validates, computes SHA-256 (dedup)
-- Triggers full pipeline as background task
-- Returns diff: new findings, re-detected, CVEs gone
-- Full UI: drag-and-drop, progress stepper, results panel
+| Page | Route | Description |
+|---|---|---|
+| Overview | `/` | KPI strip, risk/status charts, recent jobs, executive report button + history |
+| Remediation Jobs | `/jobs` | Filterable job list with risk badges and SLA indicators |
+| Job Detail | `/jobs/:id` | Lifecycle controls, AI advice, chat panel, blast-radius tab, similar findings |
+| Metrics | `/metrics` | SLA compliance, MTTR, backlog trend, KEV coverage charts |
+| Tickets | `/tickets` | Jira / console ticket list and creation |
+| Upload | `/upload` | Drag-and-drop scan file upload; pipeline progress stepper; diff results |
+| Assets | `/assets` | Asset inventory with criticality, exposure, software, threat-alert counts |
+| Findings | `/findings` | CVE-host pairs with AI triage suggestions; false-positive filter |
+| Finding Detail | `/findings/:id` | Per-finding advice, blast-radius graph, similar findings, chat |
+| Threat Alerts | `/alerts` | CPE/KEV-matched alerts per asset; dismiss / resolve |
+| Risk Register | `/risk-register` | Risk acceptances with compensating controls and expiry |
+| Enrichment | `/enrichment` | KEV / EPSS / NVD cache status; manual refresh |
+| Compliance | `/compliance` | Control catalogue coverage; job-to-control mapping |
+| Manual Entry | `/manual` | Direct CVE+host entry without a scanner file |
+| Users | `/users` | User management (Admin only) |
+| Login | `/login` | JWT authentication |
 
 ---
 
 ## API Reference
 
+### Jobs & Lifecycle
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/api/jobs` | open | List jobs (filters: status, risk_level, kev_only) |
+| GET | `/api/jobs/{id}` | open | Job detail |
+| PATCH | `/api/jobs/{id}/status` | write | Update status |
+| PATCH | `/api/jobs/{id}/triage` | write | Set triage decision |
+| PATCH | `/api/jobs/{id}/sla-override` | write | Override SLA days |
+| GET | `/api/jobs/{id}/events` | open | Audit trail |
+| POST | `/api/jobs/{id}/risk-acceptance` | write | Record risk acceptance |
+| POST | `/api/jobs/{id}/workaround` | write | Record compensating control |
+| GET | `/api/jobs/{id}/workarounds` | open | List workarounds |
+
+### Findings & Auto-Triage
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/api/findings/` | open | Findings list with triage join |
+| POST | `/api/findings/manual` | write | Submit manual CVE+host findings |
+| POST | `/api/findings/{id}/auto-triage` | analyst | Run / re-run auto-triage |
+| GET | `/api/findings/{id}/auto-triage` | open | Current triage suggestion |
+| GET | `/api/findings/manual/example` | open | Example payload |
+
+### RAG / AI
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/api/rag/jobs/{id}/recommend` | open | AI remediation recommendation |
+| POST | `/api/rag/jobs/{id}/feedback` | write | Rate a recommendation |
+| GET | `/api/rag/stats` | open | ChromaDB collection stats |
+| POST | `/api/findings/{id}/chat` | write | SSE chat stream |
+| GET | `/api/findings/{id}/conversations` | read | List conversations |
+| GET | `/api/conversations/{id}` | read | Full transcript |
+
+### Knowledge Graph
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/api/findings/{id}/blast-radius` | open | BFS subgraph (depth 1–4) |
+| GET | `/api/findings/{id}/similar` | open | Top-k similar findings (graph + embedding) |
+| POST | `/api/graph/refresh` | admin | Rebuild in-memory graph |
+
+### Executive Reports
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/api/reports/executive` | analyst | Trigger PDF generation (returns 202) |
+| GET | `/api/reports/executive` | open | List past reports |
+| GET | `/api/reports/executive/{id}` | open | Report metadata + summary text |
+| GET | `/api/reports/executive/{id}/pdf` | open | Download PDF bytes |
+
+### Other Endpoints
+
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/jobs` | List jobs (filters: status, risk_level, kev_only) |
-| GET | `/api/jobs/{id}` | Job detail |
-| PATCH | `/api/jobs/{id}/status` | Update status 🔑 |
-| PATCH | `/api/jobs/{id}/triage` | Triage decision 🔑 |
-| GET | `/api/jobs/{id}/events` | Event history |
-| GET | `/api/metrics/overview` | Dashboard summary |
-| GET | `/api/metrics/sla` | SLA compliance |
-| GET | `/api/metrics/timeline` | Jobs timeline |
-| GET | `/api/rag/jobs/{id}/recommend` | AI recommendation |
-| POST | `/api/rag/jobs/{id}/feedback` | Rate recommendation 🔑 |
-| GET | `/api/rag/stats` | ChromaDB stats |
-| POST | `/api/rescan/run` | Trigger re-scan detection 🔑 |
-| GET | `/api/rescan/status` | Re-scan status |
-| POST | `/api/uploads` | Upload scan file 🔑 |
-| GET | `/api/uploads` | Upload history |
+| GET/POST | `/api/metrics/*` | Overview, SLA, timeline |
+| POST | `/api/uploads` | Upload scan file (multipart) |
 | GET | `/api/uploads/{id}` | Upload status |
-| POST | `/api/tickets/jobs/{id}` | Create ticket 🔑 |
-| GET | `/api/tickets` | List tickets |
+| GET/POST | `/api/tickets/*` | Jira / console tickets |
+| POST | `/api/rescan/run` | Re-scan detection |
+| GET | `/api/assets/*` | Asset CRUD + software inventory |
+| GET | `/api/alerts/*` | Threat alerts lifecycle |
+| GET | `/api/compliance/*` | Control catalogue + job mapping |
+| GET | `/api/enrichment/*` | KEV/EPSS/NVD cache viewer |
+| POST/GET | `/api/auth/login` | JWT token |
+| GET/POST | `/api/users/*` | User management (Admin) |
+| GET | `/health` | Liveness check |
 
-🔑 = requires `X-Api-Key` header
+Full interactive docs at **`http://localhost:8000/docs`**.
 
 ---
 
 ## Risk Formula
 
-| Factor | Input | Normalisation | Weight |
-|---|---|---|---|
-| CVSS base score | 0–10 | ÷ 10 | 40 |
-| CISA KEV flag | bool | 0 or 1 | 20 |
-| FIRST EPSS | 0–1 | as-is | 15 |
-| Asset criticality | low/medium/high/critical | 0.25/0.5/0.75/1.0 | 15 |
-| Internet exposed | bool | 0 or 1 | 10 |
-| **Total maximum** | | | **100** |
+```
+Risk Score = (CVSS / 10) × 40
+           + KEV_flag      × 20
+           + EPSS_score    × 15
+           + criticality   × 15   (low=0.25 · medium=0.5 · high=0.75 · critical=1.0)
+           + internet_exp  × 10
+
+Thresholds:  CRITICAL ≥ 80 · HIGH ≥ 60 · MEDIUM ≥ 40 · LOW < 40
+```
+
+Weights are fully configurable in `config/policy.yaml`.
 
 ---
 
-## AI Model Selection
+## SLA Policy
 
-| Model | VRAM | Speed | Quality |
+| Risk Level | Deadline |
+|---|---|
+| CRITICAL | 7 days |
+| HIGH | 14 days |
+| MEDIUM | 30 days |
+| LOW | 90 days |
+
+Configurable in `config/policy.yaml` under `sla_days`.
+
+---
+
+## AI Model
+
+| Model | VRAM | Tok/s | Recommended for |
 |---|---|---|---|
-| **qwen2.5:14b Q5_K_M** ← recommended | ~10 GB | ~20-40 tok/s | ⭐⭐⭐⭐⭐ |
-| mistral:7b | ~4 GB | ~60 tok/s | ⭐⭐⭐ |
-| mistral-small:24b Q4_K_M | ~14 GB | ~15 tok/s | ⭐⭐⭐⭐⭐ |
+| **qwen2.5:14b** ← default | ~10 GB | ~30 tok/s | Best quality on 16 GB card |
+| mistral:7b | ~4 GB | ~60 tok/s | Low-VRAM fallback |
+| mistral-small:24b | ~14 GB | ~15 tok/s | Maximum quality |
 
-Change model: set `OLLAMA_MODEL=qwen2.5:14b` in `.env` and run `ollama pull qwen2.5:14b`.
+Change: set `model: <name>` in `config/policy.yaml` under `rag:` and run `ollama pull <name>`.
 
 ---
 
 ## Data Privacy
 
-All processing is local:
-- No scan data sent to external AI APIs
-- Qwen2.5-14B runs on your GPU via Ollama
-- Only external calls: CISA KEV feed, FIRST EPSS API, NVD API (CVE metadata only — no asset/hostname data)
+All processing is local. No scan data, asset names, or finding details leave the machine.
+
+| External call | Data sent | Purpose |
+|---|---|---|
+| CISA KEV feed | nothing | Download KEV catalogue |
+| FIRST EPSS API | CVE IDs only | Fetch exploitation probabilities |
+| NVD API v2 | CVE IDs only | Fetch CVSS scores and descriptions |
+
+Ollama runs entirely on the local GPU. The RAG corpus is stored in `data/rag_corpus/`.
 
 ---
 
@@ -249,24 +310,80 @@ All processing is local:
 
 ```
 vra/
-├── config/                  ← policy.yaml (risk weights, SLA, RAG config)
+├── config/
+│   └── policy.yaml              ← risk weights, SLA days, RAG settings
 ├── data/
-│   ├── input/               ← scanner XML + asset_inventory.csv
-│   ├── output/              ← vuln_raw, vuln_enriched, vuln_scored, remediation_jobs CSVs
-│   ├── cache/               ← enrichment.db (KEV/EPSS/NVD cache), platform.db (jobs/events)
-│   ├── uploads/             ← uploaded scan files
-│   └── rag_corpus/          ← NVD advisory text, CISA KEV notes, vendor advisories
+│   ├── input/                   ← asset CSVs, scanner files for pipeline mode
+│   │   ├── assets_demo1.csv     ← 25-asset demo inventory
+│   │   └── scanner_demo1.csv    ← 55-finding RiskTrack demo scan
+│   ├── output/                  ← intermediate pipeline CSVs
+│   ├── cache/
+│   │   ├── platform.db          ← dev instance (jobs, findings, reports …)
+│   │   ├── demo.db              ← demo instance (created fresh by start_demo.bat)
+│   │   └── enrichment.db        ← KEV / EPSS / NVD cache (shared)
+│   ├── uploads/                 ← uploaded scan files
+│   ├── reports/                 ← generated executive PDFs
+│   └── rag_corpus/
+│       ├── chroma_db/           ← vector store (created by index_rag_corpus.py)
+│       └── *.txt                ← advisory text files
 ├── src/
-│   ├── ingestion/           ← M1: adapters + build_vuln_raw.py
-│   ├── enrichment/          ← M2+M3: KEV/EPSS/NVD ingest + score_engine.py
-│   ├── remediation/         ← M4: build_remediation_jobs.py
-│   ├── rag/                 ← M8: indexer, retriever, recommender
-│   └── api/                 ← M5-M7, M9-M11: FastAPI app
-├── frontend/                ← React 18 SPA
-├── scripts/                 ← generate_sample_data, fetch_cisa_advisories, index_rag_corpus
-├── docker-compose.yml
-├── Dockerfile
+│   ├── ingestion/               ← adapters: nessus · openvas · csv_generic
+│   ├── enrichment/              ← kev_ingest · epss_ingest · nvd_ingest · score_engine
+│   ├── remediation/             ← build_remediation_jobs.py
+│   ├── rag/                     ← indexer · retriever · recommender · reranker · multi_collection
+│   └── api/
+│       ├── db/                  ← migrate.py (idempotent) · connection.py
+│       ├── repositories/        ← jobs_repo · events_repo
+│       ├── routers/             ← 19 routers (one file per domain)
+│       ├── services/
+│       │   ├── graph/           ← builder · cache · queries (blast-radius, similar)
+│       │   ├── reports/         ← executive.py (gather_state · LLM · fpdf2 PDF)
+│       │   └── …                ← upload · rag · triage · compliance · chat …
+│       └── main.py
+├── frontend/
+│   └── src/
+│       ├── pages/               ← 16 React pages
+│       ├── components/          ← shared UI components
+│       └── api/client.js        ← axios client with JWT interceptor
+├── scripts/
+│   ├── generate_sample_data.py
+│   ├── fetch_cisa_advisories.py
+│   ├── index_rag_corpus.py
+│   ├── build_real_data_from_nvd.py
+│   └── seed_demo_graph.py       ← seeds services + asset_services + dependencies
+├── docs/
+│   ├── graph.md                 ← graph model + single-process limitation
+│   └── executive-reports.md    ← prompt template + fallback + schedule
+├── run_api.py                   ← uvicorn entry point (hot-reload in dev mode)
+├── start.bat                    ← dev instance: :8000 + :5173
+├── start_demo.bat               ← demo instance: :8001 + :5174 + fresh demo.db
 ├── requirements.txt
-├── run_api.py
 └── .env.example
 ```
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PLATFORM_DB_PATH` | `data/cache/platform.db` | SQLite platform database path |
+| `JWT_SECRET_KEY` | (change in prod) | JWT signing key |
+| `JWT_EXPIRE_HOURS` | `8` | Token lifetime |
+| `API_HOST` | `0.0.0.0` | Uvicorn bind address |
+| `API_PORT` | `8000` | Uvicorn port |
+| `APP_ENV` | `dev` | `dev` enables hot-reload |
+| `VRA_SKIP_SEED` | `false` | Set `true` to skip job/asset CSV seeding (demo instance) |
+| `OLLAMA_TIMEOUT_SECONDS` | `300` | LLM call timeout |
+| `GRAPH_REFRESH_INTERVAL_SECONDS` | `60` | Graph cache TTL |
+| `REQUIRE_AUTH_FOR_READS` | `false` | Enforce auth on GET endpoints |
+| `LOG_LEVEL` | `INFO` | Python logging level |
+
+---
+
+## Known Limitations
+
+- **Graph is single-process**: the in-memory NetworkX graph is local to each uvicorn worker. Multi-worker deployments need a dedicated graph service (see `docs/graph.md`).
+- **SQLite concurrency**: WAL mode handles concurrent reads well; very high write throughput should migrate to PostgreSQL.
+- **Ollama cold start**: first recommendation after idle takes ~10 s for model load; pre-warm with `GET /api/rag/stats` before a demo.
+- **Executive PDF font**: fpdf2 built-in fonts are Latin-1; Cyrillic/CJK asset names are transliterated to `?`. Use a TTF font to lift this restriction.

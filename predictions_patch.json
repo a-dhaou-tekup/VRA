@@ -1,0 +1,49 @@
+[
+  {
+    "id": "L02",
+    "answer": "范冰春\n{\"name\": \"get_sla_compliance\", \"arguments\": {}}\n</tool_call>范春风",
+    "tools_called": [],
+    "contexts": [],
+    "_meta": {
+      "mode": "native",
+      "iterations": 1,
+      "model": "qwen2.5:14b",
+      "elapsed_s": 3.3
+    }
+  },
+  {
+    "id": "M01",
+    "answer": "There are no past-SLA critical jobs involving actively-exploited CVEs currently in your system.\n\nHowever, according to best practices and CISA advisories for handling known exploited vulnerabilities:\n\n- **Required Action:** Apply mitigations per vendor instructions. If mitigations are unavailable, follow applicable Binding Operational Directive (BOD) 22-01 guidance for cloud services or discontinue use of the product.\n  \n- **Short Description Examples:**\n  - For a Microsoft Windows out-of-bounds write vulnerability, an attacker could exploit it by constructing a specially crafted webpage. Exploitation could allow remote code execution and grant the same user rights as the current user.\n  - In another case with a SQL injection vulnerability in Microsoft Configuration Manager, an unauthenticated attacker can send specially crafted requests to execute commands on the server or underlying database.\n\nFor specific known exploited vulnerabilities (KEVs), you should closely follow vendor instructions regarding remediation actions. If mitigations are unavailable, discontinuing use of the product is recommended due to security risks.\n\nThese practices help ensure that systems remain secure against active exploitation threats while adhering to regulatory guidance and minimizing operational impact.",
+    "tools_called": [
+      {
+        "name": "list_jobs",
+        "args": {
+          "risk_level": "CRITICAL",
+          "past_sla": true,
+          "kev_only": true
+        },
+        "ok": true
+      },
+      {
+        "name": "search_knowledge",
+        "args": {
+          "query": "best practice for handling actively exploited critical vulnerabilities"
+        },
+        "ok": true
+      }
+    ],
+    "contexts": [
+      "CISA KEV Entry CVE: CVE-2013-3918 Vendor: Microsoft Product: Windows Vulnerability Name: Microsoft Windows Out-of-Bounds Write Vulnerability Date Added: 2025-10-06 Required Action: Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable. Due Date: 2025-10-27 Short Description: Microsoft Windows contains an out-of-bounds write vulnerability in the InformationCardSigninHelper Class ActiveX control, icardie.dll. An attacker could exploit the vulnerability by constructing a specially crafted webpage. When a user views the webpage, the vulnerability could allow remote code execution. An attacker who successfully exploited this vulnerability could gain the same user rights as the current user. The impacted product could be end-of-life (EoL) and/or end-of-service (EoS). Users should discontinue product utilization. Status: Known Exploited",
+      "CISA KEV Entry CVE: CVE-2024-43468 Vendor: Microsoft Product: Configuration Manager Vulnerability Name: Microsoft Configuration Manager SQL Injection Vulnerability Date Added: 2026-02-12 Required Action: Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable. Due Date: 2026-03-05 Short Description: Microsoft Configuration Manager contains an SQL injection vulnerability. An unauthenticated attacker could exploit this vulnerability by sending specially crafted requests to the target environment which are processed in an unsafe manner enabling the attacker to execute commands on the server and/or underlying database. Status: Known Exploited",
+      "CISA KEV Entry CVE: CVE-2024-12356 Vendor: BeyondTrust Product: Privileged Remote Access (PRA) and Remote Support (RS) Vulnerability Name: BeyondTrust Privileged Remote Access (PRA) and Remote Support (RS) Command Injection Vulnerability Date Added: 2024-12-19 Required Action: Apply mitigations per vendor instructions or discontinue use of the product if mitigations are unavailable. Due Date: 2024-12-27 Short Description: BeyondTrust Privileged Remote Access (PRA) and Remote Support (RS) contain a command injection vulnerability, which can allow an unauthenticated attacker to inject commands that are run as a site user. Status: Known Exploited",
+      "CISA KEV Entry CVE: CVE-2025-59374 Vendor: ASUS Product: Live Update Vulnerability Name: ASUS Live Update Embedded Malicious Code Vulnerability Date Added: 2025-12-17 Required Action: Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable. Due Date: 2026-01-07 Short Description: ASUS Live Update contains an embedded malicious code vulnerability client were distributed with unauthorized modifications introduced through a supply chain compromise. The modified builds could cause devices meeting specific targeting conditions to perform unintended actions. The impacted product could be end-of-life (EoL) and/or end-of-service (EoS). Users should discontinue product utilization. Status: Known Exploited",
+      "CISA KEV Entry CVE: CVE-2026-1731 Vendor: BeyondTrust Product: Remote Support (RS) and Privileged Remote Access (PRA) Vulnerability Name: BeyondTrust Remote Support (RS) and Privileged Remote Access (PRA) OS Command Injection Vulnerability Date Added: 2026-02-13 Required Action: Apply mitigations per vendor instructions, follow applicable BOD 22-01 guidance for cloud services, or discontinue use of the product if mitigations are unavailable. Due Date: 2026-02-16 Short Description: BeyondTrust Remote Support (RS) and Privileged Remote Access (PRA)contain an OS command injection vulnerability. Successful exploitation could allow an unauthenticated remote attacker to execute operating system commands in the context of the site user. Successful exploitation requires no authentication or user interaction and may lead to system compromise, including unauthorized access, data exfiltration, and service disruption. Status: Known Exploited"
+    ],
+    "_meta": {
+      "mode": "native",
+      "iterations": 2,
+      "model": "qwen2.5:14b",
+      "elapsed_s": 19.1
+    }
+  }
+]

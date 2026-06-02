@@ -15,6 +15,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 from rag.indexer import index_corpus, get_collection_stats
 
 result = index_corpus()
-print(f"✅ Indexed {result['files_indexed']} files · {result['chunks_indexed']} chunks · Collection: {result['collection']}")
+print(f"[OK] Indexed {result['files_indexed']} files / {result['chunks_indexed']} chunks / Collection: {result['collection']}")
 stats = get_collection_stats()
-print(f"📊 Total chunks in collection: {stats['total_chunks']}")
+print(f"[DB] Total chunks in collection: {stats['total_chunks']}")
