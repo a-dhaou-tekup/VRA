@@ -4,7 +4,7 @@ import { fetchJobs, updateJobStatus } from '../api/client'
 import RiskBadge from '../components/RiskBadge'
 import StatusBadge from '../components/StatusBadge'
 import { jobLabel } from '../utils/jobLabel'
-import { useSortable, SortTh } from '../utils/sortable'
+import { SortTh } from '../utils/sortable'
 
 const STATUS_OPTIONS = ['', 'TO_DO', 'IN_PROGRESS', 'DONE', 'CLOSED', 'RESURFACED']
 const RISK_OPTIONS = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']
@@ -40,16 +40,27 @@ export default function JobsList() {
   const [offset, setOffset] = useState(0)
   const LIMIT = 50
 
-  const { sorted: sortedJobs, col: jobSortCol, dir: jobSortDir, toggle: toggleJobSort } =
-    useSortable(jobs, 'created_at', 'desc')
+  // Server-side sort — clicking a header re-fetches with new ORDER BY
+  const [jobSortCol, setJobSortCol] = useState('created_at')
+  const [jobSortDir, setJobSortDir] = useState('desc')
+
+  function toggleJobSort(col) {
+    if (col === jobSortCol) {
+      setJobSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    } else {
+      setJobSortCol(col)
+      setJobSortDir('desc')
+    }
+    setOffset(0)
+  }
 
   const load = useCallback(() => {
     setLoading(true)
     setError(null)
-    const params = { limit: LIMIT, offset }
-    if (filters.status) params.status = filters.status
+    const params = { limit: LIMIT, offset, sort_by: jobSortCol, sort_dir: jobSortDir }
+    if (filters.status)     params.status     = filters.status
     if (filters.risk_level) params.risk_level = filters.risk_level
-    if (filters.kev_only) params.kev_only = true
+    if (filters.kev_only)   params.kev_only   = true
     fetchJobs(params)
       .then((r) => {
         setJobs(r.data?.data ?? [])
@@ -57,7 +68,7 @@ export default function JobsList() {
       })
       .catch((e) => setError(e.message || 'Failed to load jobs'))
       .finally(() => setLoading(false))
-  }, [filters, offset])
+  }, [filters, offset, jobSortCol, jobSortDir])
 
   useEffect(() => { load() }, [load])
 
@@ -153,7 +164,7 @@ export default function JobsList() {
                 </tr>
               </thead>
               <tbody>
-                {sortedJobs.map((job) => (
+                {jobs.map((job) => (
                   <tr
                     key={job.job_id}
                     style={{ borderBottom: '1px solid var(--border)' }}

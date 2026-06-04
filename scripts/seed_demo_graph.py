@@ -1,95 +1,207 @@
 #!/usr/bin/env python3
-"""Seed the demo graph tables (services, asset_services, service_dependencies).
+"""seed_demo_graph.py — populate services, asset_services, and service_dependencies.
 
-Run:  python scripts/seed_demo_graph.py
+Usage
+-----
+    python scripts/seed_demo_graph.py          # platform.db (dev instance)
+    python scripts/seed_demo_graph.py demo     # demo.db
 
-Populates 8 services, links them to the existing assets, and adds 5 dependency
-edges — enough to make blast-radius queries visually interesting.
+Idempotent — safe to run multiple times; only inserts missing rows.
+
+Service topology
+----------------
+  Network/Security  ──►  Web Frontend  ──►  API/Application  ──►  Database Cluster
+                                        └──►  Cache / Redis
+  Kubernetes Platform  ──►  API/Application
+  Observability/SIEM  (linked to monitoring hosts)
+
+7 services · hostname-pattern assignment · 5 dependency edges.
 """
 from __future__ import annotations
 
 import sqlite3
-import uuid
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT    = Path(__file__).parent.parent
-DB_PATH = ROOT / "data" / "cache" / "platform.db"
+ROOT       = Path(__file__).parent.parent
+PLATFORM_DB = ROOT / "data" / "cache" / "platform.db"
+DEMO_DB    = ROOT / "data" / "cache" / "demo.db"
+
+NOW = datetime.now(timezone.utc).isoformat()
+
+# ── Service catalogue ─────────────────────────────────────────────────────────
+
+SERVICES = [
+    ("svc-web",   "Web Frontend",             "alice.martin@tek-up.tn",
+     "Public-facing web tier — nginx, static assets, reverse proxy"),
+    ("svc-api",   "API / Application Servers","bob.chen@tek-up.tn",
+     "REST API layer — Spring Boot, FastAPI, microservices"),
+    ("svc-db",    "Database Cluster",         "diana.okafor@tek-up.tn",
+     "Primary + replica relational databases (PostgreSQL/MySQL)"),
+    ("svc-cache", "Cache & Message Bus",      "diana.okafor@tek-up.tn",
+     "Redis in-memory cache and lightweight message brokering"),
+    ("svc-k8s",   "Kubernetes Platform",      "bob.chen@tek-up.tn",
+     "Container orchestration — master and worker nodes"),
+    ("svc-net",   "Network & Security",       "carlos.ruiz@tek-up.tn",
+     "Perimeter firewalls, VPN gateways, switches, load balancers"),
+    ("svc-obs",   "Observability & SIEM",     "bob.chen@tek-up.tn",
+     "ELK stack, Prometheus, Grafana, SIEM, centralised logging"),
+]
+
+# parent --depends_on--> child
+SERVICE_DEPS = [
+    ("svc-net",   "svc-web"),    # Network edge fronts Web tier
+    ("svc-web",   "svc-api"),    # Web calls API
+    ("svc-api",   "svc-db"),     # API persists to Database
+    ("svc-api",   "svc-cache"),  # API caches via Redis
+    ("svc-k8s",   "svc-api"),   # K8s hosts API workloads
+]
+
+# (hostname-substring, service_id) — checked in order, first match wins
+HOSTNAME_RULES: list[tuple[str, str]] = [
+    # Web tier
+    ("web-prod",     "svc-web"),
+    ("prod-web",     "svc-web"),
+    ("staging-web",  "svc-web"),
+    ("cdn",          "svc-web"),
+    # API / application tier
+    ("api-prod",     "svc-api"),
+    ("prod-api",     "svc-api"),
+    ("app-prod",     "svc-api"),
+    ("app-srv",      "svc-api"),
+    ("app-dev",      "svc-api"),
+    ("mail-",        "svc-api"),
+    ("sharepoint",   "svc-api"),
+    # Database
+    ("db-prod",      "svc-db"),
+    ("prod-db",      "svc-db"),
+    ("db-staging",   "svc-db"),
+    ("nas-",         "svc-db"),
+    ("backup-",      "svc-db"),
+    # Cache
+    ("redis",        "svc-cache"),
+    # Kubernetes
+    ("k8s",          "svc-k8s"),
+    # Network / security
+    ("vpn",          "svc-net"),
+    ("fortigate",    "svc-net"),
+    ("fw-",          "svc-net"),
+    ("-fw-",         "svc-net"),
+    ("proxy",        "svc-net"),
+    ("sw-",          "svc-net"),
+    ("switch",       "svc-net"),
+    ("jump",         "svc-net"),
+    # Observability
+    ("elk",          "svc-obs"),
+    ("log-",         "svc-obs"),
+    ("mon-",         "svc-obs"),
+    ("siem",         "svc-obs"),
+    ("prod-elk",     "svc-obs"),
+    ("prod-mon",     "svc-obs"),
+]
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _match(hostname: str) -> str | None:
+    h = (hostname or "").lower()
+    for pattern, svc in HOSTNAME_RULES:
+        if pattern in h:
+            return svc
+    return None
+
+
+def seed(db_path: Path) -> None:
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    # ── 1. Services ────────────────────────────────────────────────────────────
+    ins_svc = 0
+    for sid, name, owner, desc in SERVICES:
+        if not conn.execute("SELECT 1 FROM services WHERE id=?", (sid,)).fetchone():
+            conn.execute(
+                "INSERT INTO services (id, name, owner_id, description, created_at)"
+                " VALUES (?,?,?,?,?)",
+                (sid, name, owner, desc, NOW),
+            )
+            ins_svc += 1
+    conn.commit()
+
+    # ── 2. Asset → Service ────────────────────────────────────────────────────
+    assets = conn.execute("SELECT asset_id, hostname FROM assets").fetchall()
+    ins_lnk = 0
+    unmatched: list[str] = []
+    for a in assets:
+        svc = _match(a["hostname"])
+        if svc is None:
+            unmatched.append(a["hostname"] or "?")
+            continue
+        if not conn.execute(
+            "SELECT 1 FROM asset_services WHERE asset_id=? AND service_id=?",
+            (a["asset_id"], svc),
+        ).fetchone():
+            conn.execute(
+                "INSERT INTO asset_services (asset_id, service_id) VALUES (?,?)",
+                (a["asset_id"], svc),
+            )
+            ins_lnk += 1
+    conn.commit()
+
+    # ── 3. Service → Service (depends_on) ─────────────────────────────────────
+    ins_dep = 0
+    for parent, child in SERVICE_DEPS:
+        if not conn.execute(
+            "SELECT 1 FROM service_dependencies"
+            " WHERE parent_service_id=? AND child_service_id=?",
+            (parent, child),
+        ).fetchone():
+            conn.execute(
+                "INSERT INTO service_dependencies"
+                " (parent_service_id, child_service_id, dep_type) VALUES (?,?,'depends_on')",
+                (parent, child),
+            )
+            ins_dep += 1
+    conn.commit()
+
+    # ── 4. Report ─────────────────────────────────────────────────────────────
+    print(f"\n  DB:              {db_path}")
+    print(f"  Services added:  {ins_svc} / {len(SERVICES)}")
+    print(f"  Asset links:     {ins_lnk}  ({len(unmatched)} assets unmatched)")
+    print(f"  Dep edges:       {ins_dep} / {len(SERVICE_DEPS)}")
+    if unmatched:
+        sample = sorted(set(unmatched))[:8]
+        print(f"  Unmatched hosts: {', '.join(sample)}"
+              + (" …" if len(set(unmatched)) > 8 else ""))
+    print()
+    print("  Service breakdown:")
+    for sid, name, _, _ in SERVICES:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM asset_services WHERE service_id=?", (sid,)
+        ).fetchone()[0]
+        print(f"    {name:40s} {n:3d} assets")
+    print()
+    print("  Dependency edges:")
+    for parent, child in SERVICE_DEPS:
+        p = next(s[1] for s in SERVICES if s[0] == parent)
+        c = next(s[1] for s in SERVICES if s[0] == child)
+        print(f"    {p}  -->  {c}")
+
+    conn.close()
 
 
 def main() -> None:
-    if not DB_PATH.exists():
-        print(f"[ERROR] {DB_PATH} not found — start the API first to run migrations.")
-        return
+    target  = sys.argv[1] if len(sys.argv) > 1 else "dev"
+    db_path = DEMO_DB if target == "demo" else PLATFORM_DB
 
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
+    if not db_path.exists():
+        print(f"\nERROR: {db_path} not found.")
+        print("Start the API first so migrations create the tables, then re-run.\n")
+        sys.exit(1)
 
-    # ── Load existing assets ─────────────────────────────────────────────────
-    assets = [dict(r) for r in conn.execute(
-        "SELECT asset_id, hostname FROM assets LIMIT 40"
-    ).fetchall()]
-
-    if not assets:
-        print("[WARN] No assets found. Upload a scan first, then re-run this script.")
-        conn.close()
-        return
-
-    now = _now()
-
-    # ── Upsert 8 services ────────────────────────────────────────────────────
-    SERVICES = [
-        ("svc-auth",      "Authentication Service",    "auth"),
-        ("svc-api-gw",    "API Gateway",               "api-gw"),
-        ("svc-db-primary","Primary Database",          "db-primary"),
-        ("svc-db-replica","Database Replica",          "db-replica"),
-        ("svc-cache",     "Cache Cluster (Redis)",     "cache"),
-        ("svc-ci",        "CI/CD Pipeline",            "ci"),
-        ("svc-logging",   "Centralised Logging",       "logging"),
-        ("svc-monitoring","Monitoring & Alerting",     "monitoring"),
-    ]
-    for svc_id, svc_name, _ in SERVICES:
-        conn.execute("""
-            INSERT OR IGNORE INTO services (id, name, description, created_at)
-            VALUES (?, ?, ?, ?)
-        """, (svc_id, svc_name, f"Demo service: {svc_name}", now))
-
-    # ── Link first 20 assets round-robin to services ─────────────────────────
-    svc_ids = [s[0] for s in SERVICES]
-    for i, asset in enumerate(assets[:20]):
-        svc = svc_ids[i % len(svc_ids)]
-        conn.execute("""
-            INSERT OR IGNORE INTO asset_services (asset_id, service_id)
-            VALUES (?, ?)
-        """, (asset["asset_id"], svc))
-
-    # ── 5 dependency edges (makes blast radius multi-hop) ────────────────────
-    DEPS = [
-        ("svc-api-gw",    "svc-auth"),        # API GW → Auth
-        ("svc-api-gw",    "svc-db-primary"),  # API GW → DB
-        ("svc-db-primary","svc-db-replica"),  # primary → replica
-        ("svc-auth",      "svc-cache"),       # Auth → Cache
-        ("svc-monitoring","svc-logging"),     # Monitoring → Logging
-    ]
-    for parent, child in DEPS:
-        conn.execute("""
-            INSERT OR IGNORE INTO service_dependencies
-                (parent_service_id, child_service_id, dep_type)
-            VALUES (?, ?, 'depends_on')
-        """, (parent, child))
-
-    conn.commit()
-    conn.close()
-
-    print(f"[OK] Seeded {len(SERVICES)} services, "
-          f"{min(20, len(assets))} asset-service links, "
-          f"{len(DEPS)} dependency edges.")
-    print("     Run: curl -X POST http://localhost:8000/api/graph/refresh -H 'Authorization: Bearer <token>'")
+    print("\nSeeding demo graph…")
+    seed(db_path)
+    print("Done. Call  POST /api/graph/refresh  to rebuild the in-memory graph.\n")
 
 
 if __name__ == "__main__":

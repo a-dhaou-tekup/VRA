@@ -96,24 +96,57 @@ def build_graph(db_path: Path | None = None) -> nx.DiGraph:
                 if asset_nid:
                     G.add_edge(asset_nid, comp_nid, kind="runs")
 
-        # ── Jobs: extract CVE+asset edges not already covered by findings ────
-        for row in conn.execute("SELECT cve_list, asset_ids, main_product FROM jobs"):
-            cves   = _parse_json_list(row["cve_list"])
-            assets = _parse_json_list(row["asset_ids"])
+        # ── Jobs: CVE + asset edges (primary source when findings.hostname is missing) ──
+        for row in conn.execute(
+            "SELECT cve_list, asset_ids, main_product, max_risk_level FROM jobs"
+        ):
+            cves    = _parse_json_list(row["cve_list"])
+            assets  = _parse_json_list(row["asset_ids"])
             product = row["main_product"] or ""
+            risk    = row["max_risk_level"] or ""
 
+            cve_nodes: list[str] = []
             for cve_id in cves:
                 if not cve_id:
                     continue
                 cid = _n_cve(cve_id)
                 if cid not in G:
-                    G.add_node(cid, kind="cve", label=cve_id, cve_id=cve_id)
+                    G.add_node(cid, kind="cve", label=cve_id, cve_id=cve_id,
+                               severity=risk)
+                cve_nodes.append(cid)
 
             for aid in assets:
-                nid = _n_asset(aid)
-                if nid not in G:
-                    G.add_node(nid, kind="asset", label=aid, asset_id=aid)
-                # component from main_product
+                # Try to find an already-added asset node first (added from the
+                # assets table with its real hostname) — prefer that over a phantom.
+                existing_nid = None
+                for nid_candidate, attrs in G.nodes(data=True):
+                    if (attrs.get("kind") == "asset" and
+                            attrs.get("asset_id") == aid):
+                        existing_nid = nid_candidate
+                        break
+
+                if existing_nid:
+                    nid = existing_nid
+                else:
+                    nid = _n_asset(aid)
+                    if nid not in G:
+                        asset_row = conn.execute(
+                            "SELECT hostname, criticality, environment "
+                            "FROM assets WHERE asset_id = ?", (aid,)
+                        ).fetchone()
+                        label = (asset_row["hostname"]
+                                 if asset_row and asset_row["hostname"] else aid)
+                        G.add_node(nid, kind="asset", label=label, asset_id=aid,
+                                   hostname=label,
+                                   criticality=asset_row["criticality"] if asset_row else "",
+                                   environment=asset_row["environment"] if asset_row else "")
+
+                # ── CVE → asset  (finding_of) — the critical missing edge ──────
+                for cid in cve_nodes:
+                    if not G.has_edge(cid, nid):
+                        G.add_edge(cid, nid, kind="finding_of")
+
+                # component from main_product  (asset → component)
                 if product:
                     cnid = _n_component(product)
                     if cnid not in G:

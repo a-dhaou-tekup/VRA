@@ -209,6 +209,15 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS uidx_threat_alert
         ON threat_alerts(asset_id, cve_id)
     """)
+    # Performance indexes — used by every list/filter/sort query
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ta_status          ON threat_alerts(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ta_status_kev      ON threat_alerts(status, is_kev)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ta_status_epss     ON threat_alerts(status, epss_score)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ta_alert_type      ON threat_alerts(alert_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ta_asset           ON threat_alerts(asset_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created_at    ON jobs(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status        ON jobs(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_risk          ON jobs(max_risk_level)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cpe_cve_cache (
@@ -363,6 +372,16 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             content             TEXT NOT NULL,
             retrieved_docs_json TEXT,
             created_at          TEXT NOT NULL
+        )
+    """)
+
+    # ── Alert → Job promotion link ────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS alert_jobs (
+            alert_id    INTEGER NOT NULL REFERENCES threat_alerts(id) ON DELETE CASCADE,
+            job_id      TEXT    NOT NULL REFERENCES jobs(job_id)       ON DELETE CASCADE,
+            created_at  TEXT    NOT NULL,
+            PRIMARY KEY (alert_id, job_id)
         )
     """)
 

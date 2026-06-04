@@ -110,8 +110,19 @@ export const fetchThreatAlerts   = (params)      => api.get('/api/threat-alerts'
 export const fetchThreatSummary  = ()            => api.get('/api/threat-alerts/summary')
 export const fetchAssetThreats   = (assetId)     => api.get(`/api/assets/${assetId}/threats`)
 export const runThreatMatch      = (body)        => api.post('/api/threat-alerts/match', body)
+export const promoteAlerts       = (body)        => api.post('/api/threat-alerts/promote', body)
 export const updateThreatAlert   = (id, body)    => api.patch(`/api/threat-alerts/${id}`, body)
 export const domainBreachCheck   = (domain)      => api.get('/api/threat-alerts/breach-check', { params: { domain } })
+
+// ─── Software inventory (global) ──────────────────────────────────────────
+export const fetchAllSoftware = (params) => api.get('/api/software', { params })
+export async function uploadSoftwareCsv(file) {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/api/software/csv', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
 
 // ─── Compliance ────────────────────────────────────────────────────────────
 export const fetchComplianceSummary  = ()       => api.get('/api/compliance/summary')
@@ -145,11 +156,12 @@ export const agentFeedback  = (body) => api.post('/api/agent/feedback', body)
 export const fetchAgentTools = ()   => api.get('/api/agent/tools')
 
 // ─── Findings + Auto-triage ───────────────────────────────────────────────────
-export const fetchFindings    = (params) => api.get('/api/findings/', { params })
-export const triggerAutoTriage = (findingId, force = false) =>
+export const fetchFindings         = (params)     => api.get('/api/findings/', { params })
+export const triggerAutoTriage     = (findingId, force = false) =>
   api.post(`/api/findings/${findingId}/auto-triage`, null, { params: { force } })
-export const fetchAutoTriage  = (findingId) =>
-  api.get(`/api/findings/${findingId}/auto-triage`)
+export const fetchAutoTriage       = (findingId)  => api.get(`/api/findings/${findingId}/auto-triage`)
+export const backfillFindings      = ()           => api.post('/api/findings/backfill-from-jobs')
+export const reprocessUpload       = (uploadId)   => api.post(`/api/uploads/${uploadId}/reprocess`)
 
 // ─── Graph (blast radius + similarity) ────────────────────────────────────────
 export const fetchBlastRadius    = (findingId, depth = 2) =>

@@ -60,6 +60,137 @@ function Section({ title, children }) {
   )
 }
 
+// ── Risk score breakdown ──────────────────────────────────────────────────────
+
+const FACTOR_META = {
+  cvss: {
+    label:   'CVSS',
+    max:     40,
+    color:   '#FFC40D',
+    desc:    'NVD base severity score (0–10) scaled to 40 pts. Measures intrinsic vulnerability severity independent of your environment.',
+  },
+  kev: {
+    label:   'KEV',
+    max:     20,
+    color:   '#e05252',
+    desc:    'CISA Known Exploited Vulnerability flag. A confirmed in-the-wild exploit adds a flat 20 pts regardless of CVSS.',
+  },
+  epss: {
+    label:   'EPSS',
+    max:     15,
+    color:   '#fb923c',
+    desc:    'FIRST Exploit Prediction Scoring System — 30-day probability of exploitation (0–1) scaled to 15 pts.',
+  },
+  criticality: {
+    label:   'Criticality',
+    max:     15,
+    color:   '#9b6dff',
+    desc:    'Asset criticality multiplier: low 0.25×, medium 0.50×, high 0.75×, critical 1.00×, scaled to 15 pts.',
+  },
+  exposure: {
+    label:   'Exposure',
+    max:     10,
+    color:   '#4e8faf',
+    desc:    'Internet-exposed asset flag. Reachability from the public internet adds a flat 10 pts to the risk score.',
+  },
+}
+
+function ScoreBreakdown({ breakdown }) {
+  const entries = Object.entries(breakdown).map(([key, rawVal]) => {
+    const val  = Number(rawVal)
+    const meta = FACTOR_META[key] ?? {
+      label:   key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      max:     40,
+      color:   'var(--amber)',
+      desc:    '',
+    }
+    const pct  = meta.max > 0 ? Math.min(100, (val / meta.max) * 100) : 0
+    return { key, val, meta, pct }
+  })
+
+  const total = entries.reduce((s, e) => s + e.val, 0)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {entries.map(({ key, val, meta, pct }) => (
+        <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {/* top row: label · description · value */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            {/* Factor label */}
+            <span style={{
+              fontFamily: '"IBM Plex Mono", monospace',
+              fontSize: 11, fontWeight: 700,
+              color: meta.color,
+              width: 78, flexShrink: 0, textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+            }}>
+              {meta.label}
+            </span>
+            {/* Description */}
+            <span style={{
+              flex: 1, fontSize: 11, color: 'var(--muted)', lineHeight: 1.45,
+            }}>
+              {meta.desc}
+            </span>
+            {/* Raw value + max */}
+            <span style={{
+              fontFamily: '"IBM Plex Mono", monospace', fontSize: 11,
+              color: val > 0 ? 'var(--text)' : 'var(--muted)',
+              flexShrink: 0, whiteSpace: 'nowrap',
+            }}>
+              {val.toFixed(2)}
+              <span style={{ color: 'var(--muted)', fontSize: 9 }}> / {meta.max}</span>
+            </span>
+          </div>
+
+          {/* bar row — track is 50% of the card width */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 78, flexShrink: 0 }} />
+            <div style={{
+              width: '50%', height: 6, borderRadius: 4,
+              background: 'var(--border)', flexShrink: 0, overflow: 'hidden',
+            }}>
+              <div style={{
+                width: `${pct}%`, height: '100%', borderRadius: 4,
+                background: meta.color,
+                transition: 'width 0.5s ease',
+                boxShadow: val > 0 ? `0 0 6px ${meta.color}66` : 'none',
+              }} />
+            </div>
+            {/* percentage label */}
+            <span style={{
+              fontFamily: '"IBM Plex Mono", monospace', fontSize: 9,
+              color: 'var(--muted)',
+            }}>
+              {Math.round(pct)}%
+            </span>
+          </div>
+        </div>
+      ))}
+
+      {/* Total */}
+      <div style={{
+        borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 2,
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <span style={{ width: 78, flexShrink: 0, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Total
+        </span>
+        <span style={{ flex: 1, fontSize: 11, color: 'var(--muted)' }}>
+          Sum of all factors — maximum possible score is 100
+        </span>
+        <span style={{
+          fontFamily: '"IBM Plex Mono", monospace', fontSize: 13, fontWeight: 700,
+          color: total >= 80 ? '#e05252' : total >= 60 ? '#fb923c' : total >= 40 ? '#FFC40D' : 'var(--muted)',
+        }}>
+          {total.toFixed(1)}
+          <span style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 400 }}> / 100</span>
+        </span>
+      </div>
+    </div>
+  )
+}
+
 function MetaItem({ label, value }) {
   return (
     <div>
@@ -583,28 +714,7 @@ export default function JobDetail() {
       {/* Score breakdown */}
       {scoreBreakdown && (
         <Section title="Risk Score Breakdown">
-          <div className="space-y-3">
-            {Object.entries(scoreBreakdown).map(([key, val]) => {
-              const pct = Math.min(100, Math.round((Number(val) / 10) * 100))
-              const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-              return (
-                <div key={key} className="flex items-center gap-4">
-                  <div className="w-36 text-right flex-shrink-0"
-                    style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: 'var(--muted)' }}>
-                    {label}
-                  </div>
-                  <div className="flex-1 h-2 rounded-full" style={{ background: 'var(--border)' }}>
-                    <div className="h-2 rounded-full transition-all"
-                      style={{ width: `${pct}%`, background: 'var(--amber)' }} />
-                  </div>
-                  <div className="w-10 text-right flex-shrink-0"
-                    style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, color: 'var(--text)' }}>
-                    {Number(val).toFixed(2)}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+          <ScoreBreakdown breakdown={scoreBreakdown} />
         </Section>
       )}
 

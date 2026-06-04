@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchFindings, triggerAutoTriage } from '../api/client'
+import { fetchFindings, triggerAutoTriage, backfillFindings } from '../api/client'
 import { useSortable, SortTh } from '../utils/sortable'
 
 // ── Triage pill styling ───────────────────────────────────────────────────────
@@ -145,6 +145,8 @@ export default function Findings() {
   const [sort,         setSort]        = useState('ai_valid')
   const [fpThreshold,  setFpThreshold] = useState(null)  // null = filter off
   const [running,      setRunning]     = useState({})    // findingId → bool
+  const [backfilling,  setBackfilling] = useState(false)
+  const [backfillMsg,  setBackfillMsg] = useState('')
 
   const { sorted: colSorted, col: sortCol, dir: sortDir, toggle: toggleSort } =
     useSortable(findings, 'created_at', 'desc')
@@ -205,21 +207,67 @@ export default function Findings() {
     fontSize: 12, fontFamily: '"IBM Plex Mono", monospace', cursor: 'pointer',
   }
 
+  const handleBackfill = async () => {
+    setBackfilling(true); setBackfillMsg('')
+    try {
+      const res = await backfillFindings()
+      const d = res.data?.data
+      setBackfillMsg(d?.inserted > 0
+        ? `✓ Backfilled ${d.inserted} findings from existing jobs (total: ${d.total_findings})`
+        : `✓ Nothing new to backfill — all jobs already have findings (total: ${d?.total_findings ?? '?'})`)
+      load()
+    } catch (e) {
+      setBackfillMsg(`⚠ Backfill error: ${e.response?.data?.detail || e.message}`)
+    } finally {
+      setBackfilling(false)
+    }
+  }
+
   return (
     <div style={{ padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div>
           <h1 className="page-title">Findings</h1>
           <p style={{ marginTop: 4, fontSize: 13, color: 'var(--muted)' }}>
             Individual CVE–host pairs with AI triage suggestions
           </p>
         </div>
-        <button className="btn-ghost text-xs" onClick={load} style={{ fontSize: 11 }}>
-          Refresh
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={handleBackfill}
+            disabled={backfilling}
+            title="Create findings rows for any jobs that don't have one yet"
+            style={{
+              padding: '6px 14px', borderRadius: 6, fontSize: 11,
+              background: 'transparent', border: '1px solid var(--border)',
+              color: 'var(--muted)', cursor: backfilling ? 'wait' : 'pointer',
+              fontFamily: '"IBM Plex Mono", monospace',
+              transition: 'border-color 0.15s, color 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--amber)'; e.currentTarget.style.color = 'var(--amber)' }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--muted)' }}
+          >
+            {backfilling ? '⏳ Backfilling…' : '⬡ Backfill from Jobs'}
+          </button>
+          <button className="btn-ghost text-xs" onClick={load} style={{ fontSize: 11 }}>
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {backfillMsg && (
+        <div style={{
+          padding: '8px 14px', borderRadius: 8, fontSize: 12,
+          background: backfillMsg.startsWith('✓') ? 'rgba(52,211,153,0.08)' : 'rgba(248,113,113,0.08)',
+          border: `1px solid ${backfillMsg.startsWith('✓') ? '#34d39933' : '#f8717133'}`,
+          color: backfillMsg.startsWith('✓') ? '#34d399' : '#f87171',
+          fontFamily: '"IBM Plex Mono", monospace',
+        }}>
+          {backfillMsg}
+        </div>
+      )}
 
       {/* Controls bar */}
       <div style={{

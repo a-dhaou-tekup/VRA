@@ -304,9 +304,10 @@ function SoftwarePanel({ assetId, canWrite, onKevClick }) {
 
 // ── KEV Matches tab ───────────────────────────────────────────────────────────
 
-function KevMatchesTab({ assets, focusAssetId }) {
+function KevMatchesTab({ assets, focusAssetId, kevSort, toggleKevSort }) {
   const [alerts,  setAlerts]  = useState([])
   const [loading, setLoading] = useState(true)
+  const [fetchErr, setFetchErr] = useState('')
 
   // Filter state — all 11 columns
   const [fSearch,   setFSearch]   = useState('')
@@ -329,8 +330,9 @@ function KevMatchesTab({ assets, focusAssetId }) {
   }, [focusAssetId, assets])
 
   useEffect(() => {
-    fetchThreatAlerts({ alert_type: 'kev_match', limit: 2000 })
+    fetchThreatAlerts({ alert_type: 'kev_match', status: 'open', limit: 1000 })
       .then(r => setAlerts(r.data?.data ?? []))
+      .catch(e => setFetchErr(e.response?.data?.detail || e.message))
       .finally(() => setLoading(false))
   }, [])
 
@@ -445,10 +447,20 @@ function KevMatchesTab({ assets, focusAssetId }) {
         </div>
       </div>
 
+      {fetchErr && (
+        <div className="px-4 py-3 rounded text-sm"
+          style={{ background: 'rgba(224,82,82,0.1)', border: '1px solid rgba(224,82,82,0.3)', color: 'var(--red)' }}>
+          ⚠ Failed to load KEV alerts: {fetchErr}
+        </div>
+      )}
+
       {/* Summary */}
       <div className="flex items-center gap-3">
         <span className="text-xs" style={{ color: 'var(--muted)' }}>
           {loading ? 'Loading…' : `${rows.length} asset${rows.length !== 1 ? 's' : ''} with KEV matches`}
+          {!loading && alerts.length > 0 && rows.length === 0 && !hasFilter && (
+            <span style={{ color: 'var(--amber)' }}> — active filters are hiding results, click "Clear all"</span>
+          )}
         </span>
         {loading && (
           <div className="w-4 h-4 rounded-full border-2 animate-spin"
@@ -568,10 +580,13 @@ export default function Assets() {
       .finally(() => setLoading(false))
   }, [search, fleetEnv, fleetSite, fleetTeam])
 
-  // On first mount: auto-backfill asset_type/platform for unclassified assets
+  // Auto-classify only runs once per session (sessionStorage flag) so it
+  // doesn't block page load on every navigation back to Assets.
   useEffect(() => {
-    if (canWrite) {
-      classifyAssets().then(() => load()).catch(() => load())
+    if (canWrite && !sessionStorage.getItem('vra_classified')) {
+      classifyAssets()
+        .then(() => { sessionStorage.setItem('vra_classified', '1'); load() })
+        .catch(() => load())
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -684,7 +699,12 @@ export default function Assets() {
       </div>
 
       {activeTab === 'kev' ? (
-        <KevMatchesTab assets={assets} focusAssetId={kevFocusAsset} />
+        <KevMatchesTab
+          assets={assets}
+          focusAssetId={kevFocusAsset}
+          kevSort={kevSort}
+          toggleKevSort={toggleKevSort}
+        />
       ) : (<>
 
       <FleetSummary

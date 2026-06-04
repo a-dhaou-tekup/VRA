@@ -29,9 +29,14 @@ function epssBar(score) {
 }
 
 function StatusCard({ title, source, description, data, action, isRefreshing, accent }) {
-  const stale = data?.last_fetched && data?.ttl_days
-    ? (Date.now() - new Date(data.last_fetched).getTime()) / 86_400_000 > data.ttl_days
-    : (data?.cached || 0) === 0
+  // Stale = cache is empty, or last_fetched is older than TTL.
+  // Guard against future-dated timestamps (server clock may differ from browser).
+  const stale = (() => {
+    if ((data?.cached || 0) === 0) return true
+    if (!data?.last_fetched || !data?.ttl_days) return false
+    const ageMs = Math.abs(Date.now() - new Date(data.last_fetched).getTime())
+    return ageMs / 86_400_000 > data.ttl_days
+  })()
 
   return (
     <div className="p-5 rounded bg-[var(--surface)] border border-[var(--border)]">
@@ -242,9 +247,9 @@ export default function Enrichment() {
               accent="#E05252"
             />
             <StatusCard
-              title="FIRST EPSS"
-              source="first.org/data/1.0/epss"
-              description="30-day exploitation probability"
+              title="EPSS"
+              source="epss.cyentia.com · daily bulk CSV"
+              description="Exploit prediction scores (0–1)"
               data={status?.epss}
               action={() => handleRefresh('epss', () => refreshEPSS({}))}
               isRefreshing={refreshing.epss}
@@ -679,9 +684,13 @@ export default function Enrichment() {
       </div>
 
       <p className="mt-8 text-xs text-[var(--muted)] max-w-3xl leading-relaxed">
-        <strong className="text-white">Auto-enrichment:</strong> when a scan or manual finding is
-        submitted, the pipeline fetches EPSS scores from FIRST for any CVE not already cached.
-        KEV and NVD are refreshed on demand from this page.
+        <strong className="text-white">Auto-enrichment:</strong> when a scan or threat-match is
+        run, EPSS scores are fetched from the Cyentia daily CSV for any CVE not already cached
+        (the CSV is cached locally for 24 h to avoid re-downloading on every scan).
+        KEV and NVD are refreshed on demand from this page. The legacy FIRST API v1
+        (<code className="text-white">api.first.org/data/1.0/epss</code>) was permanently
+        retired — VRA now uses the official bulk CSV from
+        <code className="text-white"> epss.cyentia.com</code> instead.
       </p>
     </div>
   )

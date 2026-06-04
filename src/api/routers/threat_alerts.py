@@ -15,7 +15,7 @@ import sqlite3
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.auth import get_current_user, require_role
 from api.db.connection import get_db
@@ -35,9 +35,34 @@ class AlertStatusUpdate(BaseModel):
 
 
 class MatchRequest(BaseModel):
-    asset_id:  Optional[str] = None   # None = scan all assets
-    use_nvd:   bool = True
-    use_osv:   bool = True
+    asset_id:    Optional[str] = None   # None = scan all assets
+    use_nvd:     bool = True
+    use_osv:     bool = True
+    force_reset: bool = Field(
+        False,
+        description="Delete open alerts for the scanned scope first, "
+                    "so this run's new_alerts count is accurate.",
+    )
+    auto_promote: bool = Field(
+        False,
+        description="Immediately promote newly-found open alerts into remediation "
+                    "jobs after matching completes (grouping='by_cve').",
+    )
+    auto_promote_grouping: str = Field(
+        "by_cve",
+        description="Grouping strategy used when auto_promote=true: "
+                    "by_cve | by_asset_product | by_product",
+    )
+
+
+class PromoteRequest(BaseModel):
+    alert_ids: Optional[list[int]] = Field(
+        None, description="Specific alert IDs to promote; omit to promote all open alerts."
+    )
+    grouping: str = Field(
+        "by_cve",
+        description="Grouping strategy: by_cve | by_asset_product | by_product",
+    )
 
 
 # ── Summary ────────────────────────────────────────────────────────────────────
@@ -58,6 +83,8 @@ def list_alerts(
     alert_type:    Optional[str] = Query(None),
     asset_id:      Optional[str] = Query(None),
     kev_only:      bool          = Query(False),
+    sort_by:       str           = Query("is_kev",  description="Column to sort by"),
+    sort_dir:      str           = Query("desc",    description="asc | desc"),
     limit:  int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     conn:   sqlite3.Connection = Depends(get_db),
@@ -69,6 +96,8 @@ def list_alerts(
         alert_type = alert_type,
         asset_id   = asset_id,
         is_kev     = True if kev_only else None,
+        sort_by    = sort_by,
+        sort_dir   = sort_dir,
         limit      = limit,
         offset     = offset,
     )
@@ -95,19 +124,76 @@ def run_match(
     conn:       sqlite3.Connection = Depends(get_db),
     user:       dict = Depends(require_role(*_WRITERS)),
 ):
-    """Trigger a CPE→CVE matching pass. Runs in the background."""
+    """Trigger a CPE→CVE matching pass.
+
+    If ``auto_promote=true`` the newly found open alerts are immediately
+    promoted into remediation jobs in the same request (using the
+    ``auto_promote_grouping`` strategy, default ``by_cve``).
+    """
     from api.services.threat_matching_service import run_threat_matching
 
-    # Run synchronously (small fleets finish fast; add background=True for large ones)
     try:
-        result = run_threat_matching(
+        match_result = run_threat_matching(
             conn,
-            asset_id = payload.asset_id,
-            use_nvd  = payload.use_nvd,
-            use_osv  = payload.use_osv,
+            asset_id    = payload.asset_id,
+            use_nvd     = payload.use_nvd,
+            use_osv     = payload.use_osv,
+            force_reset = payload.force_reset,
         )
     except Exception as exc:
         logger.error("Threat matching failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    promotion_result: dict | None = None
+    if payload.auto_promote:
+        from api.services.alert_promotion_service import promote_alerts_to_jobs
+        try:
+            promotion_result = promote_alerts_to_jobs(
+                conn,
+                alert_ids = None,          # all open alerts for the scanned scope
+                grouping  = payload.auto_promote_grouping,
+                actor     = user.get("username", "system"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"auto_promote: {exc}")
+        except Exception as exc:
+            logger.error("Auto-promotion after match failed: %s", exc)
+            # Don't mask the match result — return it alongside the error
+            return {"data": {**match_result, "promotion_error": str(exc)}}
+
+    response: dict = {**match_result}
+    if promotion_result is not None:
+        response["promotion"] = promotion_result
+
+    return {"data": response}
+
+
+# ── Promote alerts → remediation jobs ────────────────────────────────────────
+
+@router.post("/threat-alerts/promote")
+def promote_alerts(
+    payload:    PromoteRequest,
+    conn:       sqlite3.Connection = Depends(get_db),
+    user:       dict = Depends(require_role(*_WRITERS)),
+):
+    """Promote open threat alerts into remediation jobs.
+
+    Groups alerts by the chosen strategy and creates one job per group with
+    idempotent fingerprinting (re-running skips already-existing jobs).
+    """
+    from api.services.alert_promotion_service import promote_alerts_to_jobs
+
+    try:
+        result = promote_alerts_to_jobs(
+            conn,
+            alert_ids = payload.alert_ids,
+            grouping  = payload.grouping,
+            actor     = user.get("username", "system"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Alert promotion failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
     return {"data": result}
@@ -131,7 +217,6 @@ def update_alert(
     ok = threat_alerts_repo.update_status(conn, alert_id, payload.status)
     if not ok:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found.")
-    rows, _ = threat_alerts_repo.get_all(conn, status=None, limit=1, offset=0)
     row = conn.execute(
         "SELECT ta.*, a.hostname FROM threat_alerts ta JOIN assets a ON a.asset_id=ta.asset_id WHERE ta.id=?",
         (alert_id,)

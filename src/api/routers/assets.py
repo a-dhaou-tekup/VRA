@@ -11,13 +11,15 @@ P4a additions:
   - BulkImport now accepts optional 'software' list per row
 """
 
+import csv
+import io
 import logging
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user, require_role
@@ -373,6 +375,118 @@ def _require_asset(conn: sqlite3.Connection, asset_id: str) -> None:
     row = conn.execute("SELECT asset_id FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
+
+
+# ── Global software list ───────────────────────────────────────────────────────
+
+@router.get("/software")
+def list_all_software(
+    limit:  int = Query(500, ge=1, le=5000),
+    offset: int = Query(0,   ge=0),
+    search: Optional[str] = Query(None, description="Substring on product/vendor/hostname"),
+    conn:   sqlite3.Connection = Depends(get_db),
+    user:   dict = Depends(get_current_user),
+):
+    """List all installed-software entries joined with asset hostname."""
+    sql    = """SELECT sw.*, a.hostname, a.ip_address
+                FROM asset_software sw
+                JOIN assets a ON a.asset_id = sw.asset_id
+                WHERE 1=1"""
+    params: list = []
+    if search:
+        sql += " AND (sw.product LIKE ? OR sw.vendor LIKE ? OR a.hostname LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+    count = conn.execute(
+        sql.replace("sw.*, a.hostname, a.ip_address", "COUNT(*)"), params
+    ).fetchone()[0]
+    sql += " ORDER BY a.hostname, sw.product LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    rows = conn.execute(sql, params).fetchall()
+    return {"data": [dict(r) for r in rows], "total": count}
+
+
+@router.post("/software/csv", status_code=201)
+def bulk_software_csv(
+    file: UploadFile = File(..., description="CSV with columns: hostname, product, version, vendor, cpe"),
+    conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(require_role(*_WRITERS)),
+):
+    """Upload a CSV to bulk-upsert installed software across any number of assets.
+
+    Required column:  hostname  (matched to assets.hostname) OR asset_id
+    Required column:  product
+    Optional columns: version, vendor, cpe
+
+    Example CSV
+    -----------
+    hostname,product,version,vendor,cpe
+    prod-api-01,log4j-core,2.14.1,Apache,cpe:2.3:a:apache:log4j:2.14.1:*:*:*:*:*:*:*
+    prod-web-01,nginx,1.24.0,nginx Inc,
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    content = file.file.read()
+    text    = content.decode("utf-8-sig", errors="replace")
+    reader  = csv.DictReader(io.StringIO(text))
+
+    # Normalise header names to lowercase-stripped
+    reader.fieldnames = [f.strip().lower() for f in (reader.fieldnames or [])]
+
+    inserted = 0; skipped = 0
+    errors: list[str] = []
+
+    # Build hostname → asset_id lookup cache
+    host_cache: dict[str, str] = {}
+
+    def _resolve(row: dict) -> Optional[str]:
+        aid = (row.get("asset_id") or "").strip()
+        if aid:
+            return aid
+        hostname = (row.get("hostname") or "").strip()
+        if not hostname:
+            return None
+        if hostname not in host_cache:
+            r = conn.execute(
+                "SELECT asset_id FROM assets WHERE hostname = ?", (hostname,)
+            ).fetchone()
+            host_cache[hostname] = r["asset_id"] if r else ""
+        return host_cache[hostname] or None
+
+    for line_no, row in enumerate(reader, start=2):
+        product = (row.get("product") or "").strip()
+        if not product:
+            skipped += 1
+            continue
+        asset_id_resolved = _resolve(row)
+        if not asset_id_resolved:
+            errors.append(f"Line {line_no}: hostname/asset_id not found — {row}")
+            continue
+        version = (row.get("version") or "").strip() or None
+        vendor  = (row.get("vendor")  or "").strip() or None
+        cpe     = (row.get("cpe")     or "").strip() or None
+        try:
+            conn.execute(
+                """INSERT INTO asset_software
+                       (asset_id, product, version, vendor, cpe, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(asset_id, product, version) DO UPDATE SET
+                       vendor = excluded.vendor,
+                       cpe    = excluded.cpe""",
+                (asset_id_resolved, product, version or "", vendor, cpe, now),
+            )
+            inserted += 1
+        except Exception as exc:
+            errors.append(f"Line {line_no}: {exc}")
+
+    conn.commit()
+    total_sw = conn.execute("SELECT COUNT(*) FROM asset_software").fetchone()[0]
+    return {
+        "data": {
+            "inserted": inserted,
+            "skipped":  skipped,
+            "errors":   errors[:20],
+            "total_software_entries": total_sw,
+        }
+    }
 
 
 # ── Bulk CSV import (extended with fleet columns + optional software list) ─────

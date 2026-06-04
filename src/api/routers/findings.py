@@ -250,6 +250,112 @@ def get_auto_triage(
     return {"data": dict(row)}
 
 
+@router.post("/api/findings/backfill-from-jobs", status_code=200)
+def backfill_findings_from_jobs(
+    conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(require_role(*_WRITERS)),
+):
+    """Create findings rows for every (CVE, asset) pair in existing jobs that
+    has no corresponding finding yet.
+
+    Safe to call multiple times — uses INSERT OR IGNORE so it never duplicates.
+    Returns how many new rows were inserted.
+    """
+    from datetime import datetime, timezone
+    import json as _json
+
+    now = datetime.now(timezone.utc).isoformat()
+    jobs = conn.execute(
+        "SELECT job_id, cve_list, asset_ids, max_risk_level, main_product FROM jobs"
+    ).fetchall()
+
+    inserted = 0
+    for job in jobs:
+        cve_list  = _json.loads(job["cve_list"]  or "[]") if job["cve_list"]  else []
+        asset_ids = _json.loads(job["asset_ids"] or "[]") if job["asset_ids"] else []
+        if not cve_list or not asset_ids:
+            continue
+
+        for aid in asset_ids:
+            row = conn.execute(
+                "SELECT hostname FROM assets WHERE asset_id = ?", (aid,)
+            ).fetchone()
+            hostname = row["hostname"] if row else aid
+
+            for cve in cve_list:
+                if not cve or not cve.startswith("CVE-"):
+                    continue
+                existing = conn.execute(
+                    "SELECT id FROM findings WHERE cve_id = ? AND hostname = ?",
+                    (cve, hostname),
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute(
+                    """INSERT OR IGNORE INTO findings
+                       (id, upload_id, cve_id, hostname, component, severity,
+                        ingest_method, state, created_at)
+                       VALUES (?, NULL, ?, ?, ?, ?, 'backfill', 'NEW', ?)""",
+                    (
+                        str(uuid.uuid4()), cve, hostname,
+                        job["main_product"] or "",
+                        (job["max_risk_level"] or "MEDIUM").upper(),
+                        now,
+                    ),
+                )
+                inserted += 1
+
+    conn.commit()
+    total = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+    logger.info("backfill_findings_from_jobs: inserted %d rows, total=%d", inserted, total)
+    return {"data": {"inserted": inserted, "total_findings": total}}
+
+
+@router.post("/api/uploads/{upload_id}/reprocess", status_code=200)
+def reprocess_upload(
+    upload_id: str,
+    background_tasks: BackgroundTasks,
+    conn: sqlite3.Connection = Depends(get_db),
+    user: dict = Depends(require_role(*_WRITERS)),
+):
+    """Re-run the pipeline for a previously failed or partial upload.
+
+    Resets status to 'queued' and re-triggers the background processing task.
+    Useful after fixing a parser bug (e.g. adding Tenable SC column mappings).
+    """
+    row = conn.execute(
+        "SELECT id, filename, scanner_type FROM uploads WHERE id = ?", (upload_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Upload '{upload_id}' not found.")
+
+    # Find the file on disk
+    from pathlib import Path as _Path
+    from api.services.upload_service import UPLOAD_DIR, run_upload_pipeline, update_upload_status
+
+    upload_dir = UPLOAD_DIR / upload_id
+    candidates = list(upload_dir.glob("*")) if upload_dir.exists() else []
+    if not candidates:
+        raise HTTPException(status_code=404, detail=f"No files found for upload '{upload_id}'.")
+
+    file_path = str(candidates[0])
+    scanner_type = row["scanner_type"] or "auto"
+
+    update_upload_status(conn, upload_id, "queued")
+    background_tasks.add_task(
+        run_upload_pipeline,
+        upload_id=upload_id,
+        file_path=file_path,
+        scanner_type=scanner_type,
+        db_path=str(DB_PATH),
+    )
+    conn.execute("UPDATE uploads SET pipeline_triggered = 1 WHERE id = ?", (upload_id,))
+    conn.commit()
+
+    logger.info("reprocess_upload: triggered re-processing for upload %s", upload_id)
+    return {"data": {"upload_id": upload_id, "status": "queued", "file": candidates[0].name}}
+
+
 @router.get("/api/findings/manual/example")
 def get_example_payload():
     """Return a real-CVE example payload showing the correct shape.

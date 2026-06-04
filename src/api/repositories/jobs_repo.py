@@ -27,38 +27,58 @@ def safe_json_loads(v, default=None):
 
 # ── Read operations ───────────────────────────────────────────────────────────
 
+# Whitelisted sort expressions for jobs — no user input reaches SQL
+_JOB_SORT_EXPRS: dict[str, str] = {
+    "created_at":           "created_at",
+    "due_date":             "due_date",
+    "risk_score_max":       "risk_score_max",
+    "max_risk_level": (
+        "CASE max_risk_level "
+        "WHEN 'CRITICAL' THEN 4 WHEN 'HIGH' THEN 3 "
+        "WHEN 'MEDIUM'   THEN 2 WHEN 'LOW'  THEN 1 ELSE 0 END"
+    ),
+    "status":               "status",
+    "main_product":         "main_product",
+    "sla_days":             "sla_days",
+    "kev_present":          "kev_present",
+    "affected_asset_count": "affected_asset_count",
+    "cve_count":            "cve_count",
+}
+_JOB_DEFAULT_ORDER = "created_at DESC"
+
+
 def get_all_jobs(
     conn: sqlite3.Connection,
     status: Optional[str] = None,
     risk_level: Optional[str] = None,
     business_unit: Optional[str] = None,
     kev_only: bool = False,
+    sort_by:  str = "created_at",
+    sort_dir: str = "desc",
     limit: int = 200,
     offset: int = 0,
-) -> list[dict]:
+) -> tuple[list[dict], int]:
+    """Return (rows, total_count).  sort_by / sort_dir use the whitelist above."""
     clauses: list[str] = []
     params: list = []
 
-    if status:
-        clauses.append("status = ?")
-        params.append(status)
-    if risk_level:
-        clauses.append("max_risk_level = ?")
-        params.append(risk_level)
-    if business_unit:
-        clauses.append("business_unit = ?")
-        params.append(business_unit)
-    if kev_only:
-        clauses.append("kev_present = 1")
+    if status:        clauses.append("status = ?");        params.append(status)
+    if risk_level:    clauses.append("max_risk_level = ?"); params.append(risk_level)
+    if business_unit: clauses.append("business_unit = ?"); params.append(business_unit)
+    if kev_only:      clauses.append("kev_present = 1")
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    params.extend([limit, offset])
 
-    cursor = conn.execute(
-        f"SELECT * FROM jobs {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        params,
-    )
-    return [dict(row) for row in cursor.fetchall()]
+    sort_expr = _JOB_SORT_EXPRS.get(sort_by, "")
+    direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
+    order_by  = f"{sort_expr} {direction}, {_JOB_DEFAULT_ORDER}" if sort_expr else _JOB_DEFAULT_ORDER
+
+    total = conn.execute(f"SELECT COUNT(*) FROM jobs {where}", params).fetchone()[0]
+    rows  = conn.execute(
+        f"SELECT * FROM jobs {where} ORDER BY {order_by} LIMIT ? OFFSET ?",
+        params + [limit, offset],
+    ).fetchall()
+    return [dict(r) for r in rows], total
 
 
 def get_job_by_id(conn: sqlite3.Connection, job_id: str) -> dict | None:

@@ -96,8 +96,50 @@ def blast_radius(finding_id: str, depth: int = 2, conn: Optional[sqlite3.Connect
         hostname = row["hostname"] or ""
         cve_id   = row["cve_id"]   or ""
 
-        # 2. Locate the asset node
+        # 2. Locate the asset node — try multiple resolution paths
         asset_nid = _get_finding_asset_node(finding_id, G, _conn)
+
+        # Fallback A: CVE node's finding_of successors (populated from jobs)
+        cve_nid = f"cve:{cve_id}" if cve_id else None
+        candidate_assets: list[str] = []
+        if cve_nid and cve_nid in G:
+            for succ in G.successors(cve_nid):
+                if G.nodes[succ].get("kind") == "asset":
+                    hostname = G.nodes[succ].get("hostname", "")
+                    # Prefer real assets (hostname != asset_id UUID phantom)
+                    if hostname and hostname != G.nodes[succ].get("asset_id", ""):
+                        candidate_assets.insert(0, succ)   # prefer real hostnames
+                    else:
+                        candidate_assets.append(succ)
+
+        # Pick the best asset node: direct match first, then best candidate
+        if asset_nid is None and candidate_assets:
+            asset_nid = candidate_assets[0]
+            logger.info(
+                "blast_radius: used CVE→job fallback for finding %s → %s",
+                finding_id, asset_nid,
+            )
+
+        # Fallback B: scan the DB for jobs containing this CVE and use their assets
+        if asset_nid is None and cve_id:
+            for job_row in _conn.execute(
+                "SELECT asset_ids FROM jobs WHERE cve_list LIKE ?",
+                (f"%{cve_id}%",),
+            ).fetchall():
+                import json as _json
+                try:
+                    aids = _json.loads(job_row["asset_ids"] or "[]")
+                except Exception:
+                    aids = []
+                for aid in aids:
+                    candidate = f"asset:{aid}"
+                    if candidate in G:
+                        hn = G.nodes[candidate].get("hostname", "")
+                        if hn and hn != aid:   # prefer real hostname over UUID
+                            asset_nid = candidate
+                            break
+                if asset_nid:
+                    break
 
         # 3. BFS outward from the asset (and also include the CVE node)
         visited: set[str] = set()
@@ -107,11 +149,9 @@ def blast_radius(finding_id: str, depth: int = 2, conn: Optional[sqlite3.Connect
         else:
             logger.warning("blast_radius: no asset node found for finding %s", finding_id)
 
-        # Always include the CVE node
-        cve_nid = f"cve:{cve_id}" if cve_id else None
+        # Always include the CVE node and its 1-hop neighbours
         if cve_nid and cve_nid in G:
             visited.add(cve_nid)
-            # Add 1-hop neighbours of the CVE as well
             for nbr in list(G.successors(cve_nid)) + list(G.predecessors(cve_nid)):
                 visited.add(nbr)
 

@@ -29,6 +29,10 @@ HIBP_DOMAIN_API = "https://haveibeenpwned.com/api/v3/breacheddomain/{domain}"
 NVD_DELAY       = 0.7   # free-tier: ~50 req/30s without key
 CPE_CACHE_TTL   = 30    # days before re-fetching a CPE from NVD
 
+# Sentinel written to cpe_cve_cache when NVD returns 0 CVEs for a CPE so that
+# subsequent calls respect the TTL instead of hitting NVD again every time.
+_CPE_EMPTY_SENTINEL = "__EMPTY__"
+
 HIGH_EPSS_THRESHOLD = 0.4   # >= 40 % exploitation probability → high-epss alert
 
 ROOT    = Path(__file__).parent.parent.parent.parent
@@ -63,18 +67,27 @@ def _is_cache_fresh(conn: sqlite3.Connection, cpe: str) -> bool:
 
 def _cache_cpe_cves(conn: sqlite3.Connection, cpe: str, cves: list[dict]) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    for entry in cves:
+    if not cves:
+        # Write a sentinel so _is_cache_fresh returns True on the next call,
+        # preventing repeated NVD hits for a CPE that legitimately has no CVEs.
         conn.execute(
-            """INSERT OR REPLACE INTO cpe_cve_cache (cpe, cve_id, severity, cached_at)
-               VALUES (?, ?, ?, ?)""",
-            (cpe, entry["cve_id"], entry.get("severity"), now),
+            "INSERT OR REPLACE INTO cpe_cve_cache (cpe, cve_id, severity, cached_at) VALUES (?, ?, NULL, ?)",
+            (cpe, _CPE_EMPTY_SENTINEL, now),
         )
+    else:
+        for entry in cves:
+            conn.execute(
+                """INSERT OR REPLACE INTO cpe_cve_cache (cpe, cve_id, severity, cached_at)
+                   VALUES (?, ?, ?, ?)""",
+                (cpe, entry["cve_id"], entry.get("severity"), now),
+            )
     conn.commit()
 
 
 def _load_cached_cves(conn: sqlite3.Connection, cpe: str) -> list[dict]:
     rows = conn.execute(
-        "SELECT cve_id, severity FROM cpe_cve_cache WHERE cpe = ?", (cpe,)
+        "SELECT cve_id, severity FROM cpe_cve_cache WHERE cpe = ? AND cve_id != ?",
+        (cpe, _CPE_EMPTY_SENTINEL),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -314,6 +327,7 @@ def run_threat_matching(
     asset_id: Optional[str] = None,
     use_osv: bool = True,
     use_nvd: bool = True,
+    force_reset: bool = False,
 ) -> dict:
     """Match asset software against NVD/OSV; generate threat_alerts rows.
 
@@ -326,6 +340,24 @@ def run_threat_matching(
     Returns summary dict with counts.
     """
     from api.repositories import asset_software_repo, threat_alerts_repo
+
+    # ── Optional: wipe open alerts for the target scope before re-scanning ────
+    # This lets subsequent runs show accurate "new_alerts" counts instead of
+    # always reporting 0 new / N updated.
+    if force_reset:
+        if asset_id:
+            conn.execute(
+                "DELETE FROM threat_alerts WHERE asset_id = ? AND status = 'open'",
+                (asset_id,),
+            )
+        else:
+            conn.execute("DELETE FROM threat_alerts WHERE status = 'open'")
+        # No commit here — the DELETE is part of the same transaction as the
+        # subsequent inserts so the full scan is atomic (delete + re-insert).
+        logger.info(
+            "threat_matching: force_reset will clear open alerts for %s",
+            asset_id or "ALL assets",
+        )
 
     if asset_id:
         sw_list = asset_software_repo.get_by_asset(conn, asset_id)
@@ -344,79 +376,129 @@ def run_threat_matching(
     # Deduplicate: don't call NVD twice for the same CPE in one run
     cpe_cache: dict[str, list[dict]] = {}
 
-    for sw in sw_list:
-        aid     = sw["asset_id"]
-        product = sw.get("product", "")
-        version = sw.get("version", "")
-        cpe     = sw.get("cpe", "")
+    try:
+        # ── Pass 1: collect all (software entry, CVE candidates) ─────────────
+        # We need all CVE IDs up-front so we can batch-fetch EPSS before writing
+        # any alerts.  Without this, every alert would be written with epss_score=0
+        # because the FIRST.org cache is only populated lazily.
+        all_entries: list[tuple[dict, list[dict]]] = []   # [(sw, candidates)]
 
-        cve_candidates: list[dict] = []   # [{"cve_id": ..., "severity": ..., "source": ...}]
+        for sw in sw_list:
+            aid     = sw["asset_id"]
+            product = sw.get("product", "")
+            version = sw.get("version", "")
+            cpe     = sw.get("cpe", "")
 
-        # ── NVD CPE match ─────────────────────────────────────────────────────
-        if use_nvd and cpe:
-            if cpe not in cpe_cache:
-                cpe_cache[cpe] = fetch_nvd_by_cpe(conn, cpe)
-            for entry in cpe_cache[cpe]:
-                cve_candidates.append({**entry, "source": "nvd", "matched_cpe": cpe})
+            cve_candidates: list[dict] = []
 
-        # ── OSV package match ─────────────────────────────────────────────────
-        if use_osv and product:
-            osv_cves = fetch_osv_by_package(product)
-            for cve_id in osv_cves:
-                if not any(c["cve_id"] == cve_id for c in cve_candidates):
-                    cve_candidates.append({
-                        "cve_id": cve_id, "severity": None,
-                        "source": "osv", "matched_cpe": cpe or None,
-                    })
+            if use_nvd and cpe:
+                if cpe not in cpe_cache:
+                    cpe_cache[cpe] = fetch_nvd_by_cpe(conn, cpe)
+                for entry in cpe_cache[cpe]:
+                    cve_candidates.append({**entry, "source": "nvd", "matched_cpe": cpe})
 
-        # ── Enrich each candidate + write alert ───────────────────────────────
-        for candidate in cve_candidates:
-            cve_id = candidate["cve_id"]
+            if use_osv and product:
+                osv_cves = fetch_osv_by_package(product)
+                for cve_id in osv_cves:
+                    if not any(c["cve_id"] == cve_id for c in cve_candidates):
+                        cve_candidates.append({
+                            "cve_id": cve_id, "severity": None,
+                            "source": "osv", "matched_cpe": cpe or None,
+                        })
+
+            if cve_candidates:
+                all_entries.append((sw, cve_candidates))
+
+        # ── EPSS batch pre-fetch ──────────────────────────────────────────────
+        # Collect every unique CVE ID encountered (software matches + OS KEV).
+        # Fetch EPSS for those not already in the cache so that alert_type
+        # classification (high_epss vs cpe_match) and risk scoring are accurate.
+        all_cve_ids: set[str] = {
+            c["cve_id"]
+            for _, cands in all_entries
+            for c in cands
+            if c.get("cve_id", "").startswith("CVE-")
+        }
+        # Also include OS-level KEV CVEs already in enrichment.db
+        try:
+            kev_ids = {
+                r["cve_id"]
+                for r in enrich.execute(
+                    "SELECT cve_id FROM cve_context WHERE kev_flag = 1"
+                ).fetchall()
+            }
+            all_cve_ids |= kev_ids
+        except Exception:
+            pass
+
+        if all_cve_ids:
             try:
-                ctx = _get_cve_context(enrich, cve_id)
-                is_kev     = bool(ctx.get("kev_flag", 0))
-                epss_score = float(ctx.get("epss_score") or 0.0)
-
-                # Determine alert type (KEV > high-EPSS > plain CPE match)
-                if is_kev:
-                    alert_type = "kev_match"
-                    severity   = "CRITICAL"
-                elif epss_score >= HIGH_EPSS_THRESHOLD:
-                    alert_type = "high_epss"
-                    severity   = candidate.get("severity") or "HIGH"
-                else:
-                    alert_type = "cpe_match"
-                    severity   = candidate.get("severity") or "MEDIUM"
-
-                result = threat_alerts_repo.upsert_alert(
-                    conn,
-                    asset_id        = aid,
-                    cve_id          = cve_id,
-                    source          = candidate.get("source", "nvd"),
-                    severity        = severity,
-                    epss_score      = epss_score,
-                    is_kev          = is_kev,
-                    matched_cpe     = candidate.get("matched_cpe"),
-                    matched_product = product,
-                    matched_version = version,
-                    alert_type      = alert_type,
+                from enrichment.epss_ingest import enrich_epss
+                enrich_epss(list(all_cve_ids), force=False)
+                logger.info(
+                    "threat_matching: EPSS pre-fetch done for %d CVEs", len(all_cve_ids)
                 )
-                # Distinguish new vs updated by created_at == updated_at
-                if result["created_at"] == result["updated_at"]:
-                    new_alerts += 1
-                else:
-                    updated_alerts += 1
-
             except Exception as exc:
-                logger.error("Error processing %s / %s: %s", aid, cve_id, exc)
-                errors += 1
+                logger.warning(
+                    "threat_matching: EPSS batch fetch failed (non-fatal, scores will be 0): %s", exc
+                )
 
-    # ── OS-level KEV scan (catches assets with os_version but no software) ────
-    os_new, os_upd = _scan_os_against_kev(conn, enrich, asset_id)
-    new_alerts     += os_new
-    updated_alerts += os_upd
+        # ── Pass 2: enrich each candidate and write alerts ────────────────────
+        for sw, cve_candidates in all_entries:
+            aid     = sw["asset_id"]
+            product = sw.get("product", "")
+            version = sw.get("version", "")
 
-    enrich.close()
+            for candidate in cve_candidates:
+                cve_id = candidate["cve_id"]
+                try:
+                    ctx = _get_cve_context(enrich, cve_id)
+                    is_kev     = bool(ctx.get("kev_flag", 0))
+                    epss_score = float(ctx.get("epss_score") or 0.0)
+
+                    # Determine alert type (KEV > high-EPSS > plain CPE match)
+                    if is_kev:
+                        alert_type = "kev_match"
+                        severity   = "CRITICAL"
+                    elif epss_score >= HIGH_EPSS_THRESHOLD:
+                        alert_type = "high_epss"
+                        severity   = candidate.get("severity") or "HIGH"
+                    else:
+                        alert_type = "cpe_match"
+                        severity   = candidate.get("severity") or "MEDIUM"
+
+                    result = threat_alerts_repo.upsert_alert(
+                        conn,
+                        asset_id        = aid,
+                        cve_id          = cve_id,
+                        source          = candidate.get("source", "nvd"),
+                        severity        = severity,
+                        epss_score      = epss_score,
+                        is_kev          = is_kev,
+                        matched_cpe     = candidate.get("matched_cpe"),
+                        matched_product = product,
+                        matched_version = version,
+                        alert_type      = alert_type,
+                    )
+                    if result["created_at"] == result["updated_at"]:
+                        new_alerts += 1
+                    else:
+                        updated_alerts += 1
+
+                except Exception as exc:
+                    logger.error("Error processing %s / %s: %s", aid, cve_id, exc)
+                    errors += 1
+
+        # ── OS-level KEV scan (catches assets with os_version but no software) ─
+        os_new, os_upd = _scan_os_against_kev(conn, enrich, asset_id)
+        new_alerts     += os_new
+        updated_alerts += os_upd
+
+    finally:
+        enrich.close()
+
+    # Commit all upserts (and the force_reset DELETE if applicable) in one shot.
+    conn.commit()
 
     # Unique assets covered: software-bearing + OS-scanned
     sw_asset_ids  = {sw["asset_id"] for sw in sw_list}

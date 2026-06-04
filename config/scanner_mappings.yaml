@@ -1,6 +1,23 @@
 # Scanner column name mappings to VRA's internal schema.
 # Each scanner adapter uses this file to normalise column names.
+#
+# The CSV generic adapter picks the mapping that renames the MOST columns
+# (best-match wins), so more specific formats should have more entries.
 
+# ── Tenable SecurityCenter / Nessus.sc export ─────────────────────────────────
+# Columns: Plugin, Plugin Name, Family, Severity, VPR, IP Address, DNS Name, etc.
+# CVE IDs are embedded in Plugin Name as "(CVE-YYYY-NNNN)" — extracted by the adapter.
+tenable_sc:
+  "IP Address": ip_address
+  "DNS Name": hostname
+  "NetBIOS Name": hostname_netbios     # fallback if DNS Name is empty
+  "Severity": severity
+  "Plugin": plugin_id
+  "Plugin Name": plugin_name
+  "Family": plugin_family
+  "VPR": cvss_base_score              # VPR (0–10) used as CVSS proxy
+
+# ── Nessus CSV export ─────────────────────────────────────────────────────────
 nessus:
   host: hostname
   "IP Address": ip_address

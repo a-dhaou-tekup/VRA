@@ -3,10 +3,16 @@ import {
   fetchThreatAlerts,
   fetchThreatSummary,
   runThreatMatch,
+  promoteAlerts,
   updateThreatAlert,
+  fetchAllSoftware,
+  addAssetSoftware,
+  deleteAssetSoftware,
+  uploadSoftwareCsv,
+  fetchAssets,
 } from '../api/client'
 import { useAuth } from '../context/AuthContext'
-import { useSortable, SortTh } from '../utils/sortable'
+import { SortTh } from '../utils/sortable'
 
 // ─── helpers ───────────────────────────────────────────────────────────────────
 
@@ -63,12 +69,207 @@ function StatCard({ label, value, accent, sub }) {
   )
 }
 
+// ─── Shared grouping selector ──────────────────────────────────────────────────
+
+const GROUPING_OPTIONS = [
+  { value: 'by_cve',          label: 'By CVE',          desc: 'One job per CVE — best for widespread vulnerabilities' },
+  { value: 'by_asset_product', label: 'By Asset × Product', desc: 'One job per (asset, product) — granular patch schedules' },
+  { value: 'by_product',      label: 'By Product',      desc: 'One job per product across all assets — vendor-patch batches' },
+]
+
+function GroupingSelect({ value, onChange }) {
+  return (
+    <div>
+      <label className="mono-label block mb-1">Grouping strategy</label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {GROUPING_OPTIONS.map(opt => (
+          <label key={opt.value}
+            className="flex items-start gap-3 text-sm cursor-pointer px-3 py-2 rounded"
+            style={{
+              background: value === opt.value ? 'rgba(255,196,13,0.08)' : 'var(--dark)',
+              border: `1px solid ${value === opt.value ? 'rgba(255,196,13,0.35)' : 'var(--border)'}`,
+              transition: 'all 0.15s',
+            }}
+          >
+            <input type="radio" name="grouping" value={opt.value} checked={value === opt.value}
+              onChange={() => onChange(opt.value)} className="accent-yellow-400 mt-0.5 flex-shrink-0" />
+            <span>
+              <span style={{ color: 'var(--text)', fontWeight: 500 }}>{opt.label}</span>
+              <span style={{ color: 'var(--muted)', marginLeft: 6, fontSize: 11 }}>— {opt.desc}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── MatchModal ────────────────────────────────────────────────────────────────
 
-function MatchModal({ onClose, onDone }) {
-  const [assetId, setAssetId]   = useState('')
-  const [useNvd, setUseNvd]     = useState(true)
-  const [useOsv, setUseOsv]     = useState(true)
+function MatchModal({ onClose, onDone, softwareCount }) {
+  const [assetId, setAssetId]           = useState('')
+  const [useNvd, setUseNvd]             = useState(true)
+  const [useOsv, setUseOsv]             = useState(true)
+  const [forceReset, setForceReset]     = useState(false)
+  const [autoPromote, setAutoPromote]   = useState(false)
+  const [grouping, setGrouping]         = useState('by_cve')
+  const [running, setRunning]           = useState(false)
+  const [result, setResult]             = useState(null)
+  const [error, setError]               = useState('')
+
+  async function submit() {
+    setRunning(true); setError(''); setResult(null)
+    try {
+      const res = await runThreatMatch({
+        asset_id:              assetId || null,
+        use_nvd:               useNvd,
+        use_osv:               useOsv,
+        force_reset:           forceReset,
+        auto_promote:          autoPromote,
+        auto_promote_grouping: grouping,
+      })
+      setResult(res.data?.data ?? res.data)
+      onDone()
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const promo = result?.promotion
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.65)' }}>
+      <div className="rounded-xl p-6 w-full shadow-2xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto' }}>
+        <h2 className="text-lg font-bold mb-4" style={{ fontFamily: 'Syne, sans-serif', color: 'var(--text)' }}>
+          Run Threat Matching
+        </h2>
+
+        {softwareCount < 5 && (
+          <div className="mb-4 text-sm px-3 py-2 rounded" style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid #fbbf2444' }}>
+            ⚠ Only <strong>{softwareCount}</strong> software {softwareCount === 1 ? 'entry' : 'entries'} in inventory.
+            CPE/OSV matching will be limited. OS-level KEV matching still runs for all assets.
+          </div>
+        )}
+
+        <div className="space-y-4">
+          <div>
+            <label className="mono-label block mb-1">Hostname or Asset ID (blank = all assets)</label>
+            <input
+              className="w-full rounded px-3 py-2 text-sm"
+              style={{ background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--text)' }}
+              placeholder="e.g. prod-api-01 or leave empty for all"
+              value={assetId}
+              onChange={e => setAssetId(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-6">
+            <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text)' }}>
+              <input type="checkbox" checked={useNvd} onChange={e => setUseNvd(e.target.checked)} className="accent-yellow-400" />
+              Use NVD (CPE match)
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text)' }}>
+              <input type="checkbox" checked={useOsv} onChange={e => setUseOsv(e.target.checked)} className="accent-yellow-400" />
+              Use OSV (package match)
+            </label>
+          </div>
+
+          <label className="flex items-start gap-2 text-sm cursor-pointer" style={{ color: 'var(--text)' }}>
+            <input type="checkbox" checked={forceReset} onChange={e => setForceReset(e.target.checked)}
+              className="accent-yellow-400 mt-0.5" />
+            <span>
+              <span className="font-medium">Force re-detect</span>
+              <span style={{ color: 'var(--muted)' }}> — clears existing open alerts first so new-alert count is accurate</span>
+            </span>
+          </label>
+
+          {/* Divider */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <label className="flex items-start gap-2 text-sm cursor-pointer" style={{ color: 'var(--text)' }}>
+              <input type="checkbox" checked={autoPromote} onChange={e => setAutoPromote(e.target.checked)}
+                className="accent-yellow-400 mt-0.5" />
+              <span>
+                <span className="font-medium" style={{ color: '#34d399' }}>Auto-promote to Jobs</span>
+                <span style={{ color: 'var(--muted)' }}> — immediately create remediation jobs from all newly-found open alerts</span>
+              </span>
+            </label>
+
+            {autoPromote && (
+              <div className="mt-3 pl-6">
+                <GroupingSelect value={grouping} onChange={setGrouping} />
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <div className="text-sm px-3 py-2 rounded" style={{ background: 'rgba(248,113,113,0.12)', color: '#f87171', border: '1px solid #f8717144' }}>
+              {error}
+            </div>
+          )}
+
+          {result && (
+            <div className="text-sm px-3 py-2 rounded space-y-2" style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid #34d39933' }}>
+              {/* Match result */}
+              <div style={{ color: '#34d399', fontWeight: 600 }}>
+                {result.new_alerts > 0
+                  ? `✓ ${result.new_alerts} new threat${result.new_alerts !== 1 ? 's' : ''} detected`
+                  : result.updated_alerts > 0
+                    ? `↻ ${result.updated_alerts} alerts refreshed`
+                    : '✓ No new threats found'}
+              </div>
+              <div style={{ color: 'var(--muted)', fontSize: 11, fontFamily: '"IBM Plex Mono", monospace' }}>
+                {result.assets_scanned} assets · {result.software_entries} sw entries ·{' '}
+                {result.new_alerts} new · {result.updated_alerts} refreshed
+                {result.errors > 0 && ` · ${result.errors} errors`}
+              </div>
+              {/* Promotion result */}
+              {promo && (
+                <div style={{ borderTop: '1px solid #34d39933', paddingTop: 8 }}>
+                  <div style={{ color: '#34d399', fontWeight: 600 }}>
+                    {promo.jobs_created > 0
+                      ? `⬡ ${promo.jobs_created} remediation job${promo.jobs_created !== 1 ? 's' : ''} created`
+                      : '⬡ No new jobs (all already existed)'}
+                  </div>
+                  <div style={{ color: 'var(--muted)', fontSize: 11, fontFamily: '"IBM Plex Mono", monospace' }}>
+                    {promo.jobs_created} created · {promo.jobs_skipped} skipped · {promo.alert_ids_promoted?.length ?? 0} alerts linked · grouping: {promo.grouping}
+                  </div>
+                </div>
+              )}
+              {result.promotion_error && (
+                <div style={{ color: '#fb923c', fontSize: 11 }}>⚠ Promotion error: {result.promotion_error}</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3 mt-6 justify-end">
+          <button onClick={onClose} className="px-4 py-2 rounded text-sm"
+            style={{ background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--muted)', cursor: 'pointer' }}>
+            {result ? 'Close' : 'Cancel'}
+          </button>
+          {result ? (
+            <button onClick={() => setResult(null)} className="px-4 py-2 rounded text-sm font-semibold"
+              style={{ background: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+              Run Again
+            </button>
+          ) : (
+            <button onClick={submit} disabled={running} className="px-4 py-2 rounded text-sm font-semibold"
+              style={{ background: '#FFC40D', color: '#000', border: 'none', cursor: running ? 'wait' : 'pointer', opacity: running ? 0.7 : 1 }}>
+              {running ? (autoPromote ? 'Matching & Promoting…' : 'Running…') : (autoPromote ? 'Match + Promote' : 'Run Match')}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── PromoteModal ──────────────────────────────────────────────────────────────
+
+function PromoteModal({ onClose, onDone, openAlertCount }) {
+  const [grouping, setGrouping] = useState('by_cve')
   const [running, setRunning]   = useState(false)
   const [result, setResult]     = useState(null)
   const [error, setError]       = useState('')
@@ -76,7 +277,7 @@ function MatchModal({ onClose, onDone }) {
   async function submit() {
     setRunning(true); setError(''); setResult(null)
     try {
-      const res = await runThreatMatch({ asset_id: assetId || null, use_nvd: useNvd, use_osv: useOsv })
+      const res = await promoteAlerts({ grouping })
       setResult(res.data?.data ?? res.data)
       onDone()
     } catch (e) {
@@ -88,36 +289,17 @@ function MatchModal({ onClose, onDone }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.65)' }}>
-      <div
-        className="rounded-xl p-6 w-full max-w-md shadow-2xl"
-        style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
-      >
-        <h2 className="text-lg font-bold mb-4" style={{ fontFamily: 'Syne, sans-serif', color: 'var(--text)' }}>
-          Run Threat Matching
+      <div className="rounded-xl p-6 w-full shadow-2xl" style={{ background: 'var(--surface)', border: '1px solid var(--border)', maxWidth: 480 }}>
+        <h2 className="text-lg font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif', color: 'var(--text)' }}>
+          Promote Alerts → Jobs
         </h2>
+        <p className="text-sm mb-5" style={{ color: 'var(--muted)' }}>
+          Converts <strong style={{ color: 'var(--text)' }}>{openAlertCount} open alert{openAlertCount !== 1 ? 's' : ''}</strong> into
+          remediation jobs. Already-promoted alerts are skipped (idempotent).
+        </p>
 
         <div className="space-y-4">
-          <div>
-            <label className="mono-label block mb-1">Asset ID (leave blank for all assets)</label>
-            <input
-              className="w-full rounded px-3 py-2 text-sm"
-              style={{ background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--text)' }}
-              placeholder="e.g. abc123… or leave empty"
-              value={assetId}
-              onChange={e => setAssetId(e.target.value)}
-            />
-          </div>
-
-          <div className="flex gap-6">
-            <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text)' }}>
-              <input type="checkbox" checked={useNvd} onChange={e => setUseNvd(e.target.checked)} className="accent-yellow-400" />
-              Use NVD
-            </label>
-            <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text)' }}>
-              <input type="checkbox" checked={useOsv} onChange={e => setUseOsv(e.target.checked)} className="accent-yellow-400" />
-              Use OSV
-            </label>
-          </div>
+          <GroupingSelect value={grouping} onChange={setGrouping} />
 
           {error && (
             <div className="text-sm px-3 py-2 rounded" style={{ background: 'rgba(248,113,113,0.12)', color: '#f87171', border: '1px solid #f8717144' }}>
@@ -126,34 +308,259 @@ function MatchModal({ onClose, onDone }) {
           )}
 
           {result && (
-            <div className="text-sm px-3 py-2 rounded" style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399', border: '1px solid #34d39944' }}>
-              Scanned {result.assets_scanned} assets · {result.software_entries} software entries ·
-              {' '}{result.new_alerts} new alerts · {result.updated_alerts} updated
-              {result.errors?.length > 0 && ` · ${result.errors.length} errors`}
+            <div className="text-sm px-3 py-2 rounded space-y-1" style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid #34d39933' }}>
+              <div style={{ color: '#34d399', fontWeight: 600 }}>
+                {result.jobs_created > 0
+                  ? `⬡ ${result.jobs_created} job${result.jobs_created !== 1 ? 's' : ''} created`
+                  : '⬡ No new jobs — all alerts were already promoted'}
+              </div>
+              <div style={{ color: 'var(--muted)', fontSize: 11, fontFamily: '"IBM Plex Mono", monospace' }}>
+                {result.jobs_created} created · {result.jobs_skipped} skipped ·{' '}
+                {result.alert_ids_promoted?.length ?? 0} alerts linked · grouping: {result.grouping}
+              </div>
             </div>
           )}
         </div>
 
         <div className="flex gap-3 mt-6 justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded text-sm"
-            style={{ background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--muted)', cursor: 'pointer' }}
-          >
+          <button onClick={onClose} className="px-4 py-2 rounded text-sm"
+            style={{ background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--muted)', cursor: 'pointer' }}>
             {result ? 'Close' : 'Cancel'}
           </button>
-          {!result && (
-            <button
-              onClick={submit}
-              disabled={running}
-              className="px-4 py-2 rounded text-sm font-semibold"
-              style={{ background: '#FFC40D', color: '#000', border: 'none', cursor: running ? 'wait' : 'pointer', opacity: running ? 0.7 : 1 }}
-            >
-              {running ? 'Running…' : 'Run Match'}
+          {result ? (
+            <button onClick={() => setResult(null)} className="px-4 py-2 rounded text-sm font-semibold"
+              style={{ background: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+              Run Again
+            </button>
+          ) : (
+            <button onClick={submit} disabled={running || openAlertCount === 0} className="px-4 py-2 rounded text-sm font-semibold"
+              style={{ background: '#34d399', color: '#000', border: 'none', cursor: (running || openAlertCount === 0) ? 'not-allowed' : 'pointer', opacity: (running || openAlertCount === 0) ? 0.6 : 1 }}>
+              {running ? 'Promoting…' : 'Promote to Jobs'}
             </button>
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+
+// ─── SoftwarePanel ─────────────────────────────────────────────────────────────
+
+function SoftwarePanel({ canWrite, onCountChange }) {
+  const [software, setSoftware]     = useState([])
+  const [total, setTotal]           = useState(0)
+  const [loading, setLoading]       = useState(true)
+  const [uploading, setUploading]   = useState(false)
+  const [uploadResult, setUploadResult] = useState(null)
+  const [uploadError, setUploadError]   = useState('')
+  const [search, setSearch]         = useState('')
+  // Manual add form
+  const [showForm, setShowForm]     = useState(false)
+  const [assets, setAssets]         = useState([])
+  const [form, setForm]             = useState({ asset_id: '', product: '', version: '', vendor: '', cpe: '' })
+  const [saving, setSaving]         = useState(false)
+  const [saveError, setSaveError]   = useState('')
+  const fileRef = useRef()
+
+  const load = useCallback(() => {
+    setLoading(true)
+    fetchAllSoftware({ limit: 200, search: search || undefined })
+      .then(r => {
+        const rows = r.data?.data ?? []
+        setSoftware(rows)
+        setTotal(r.data?.total ?? rows.length)
+        onCountChange(r.data?.total ?? rows.length)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [search, onCountChange])
+
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    fetchAssets({ limit: 500 }).then(r => setAssets(r.data?.data ?? [])).catch(() => {})
+  }, [])
+
+  async function handleCsvUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true); setUploadResult(null); setUploadError('')
+    try {
+      const res = await uploadSoftwareCsv(file)
+      setUploadResult(res.data?.data)
+      load()
+    } catch (err) {
+      setUploadError(err.response?.data?.detail || err.message)
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
+  }
+
+  async function handleManualAdd(e) {
+    e.preventDefault()
+    if (!form.asset_id || !form.product) return
+    setSaving(true); setSaveError('')
+    try {
+      await addAssetSoftware(form.asset_id, { product: form.product, version: form.version || null, vendor: form.vendor || null, cpe: form.cpe || null })
+      setForm({ asset_id: form.asset_id, product: '', version: '', vendor: '', cpe: '' })
+      load()
+    } catch (err) {
+      setSaveError(err.response?.data?.detail || err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete(sw) {
+    try {
+      await deleteAssetSoftware(sw.asset_id, sw.id)
+      load()
+    } catch { /* ignore */ }
+  }
+
+  const INPUT = { background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 6, padding: '6px 10px', fontSize: 12, width: '100%' }
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+      {/* Header */}
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div className="mono-label">Software Inventory</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+            {total} entries — used by CPE/OSV threat matching
+          </div>
+        </div>
+        {canWrite && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setShowForm(v => !v)}
+              style={{ fontSize: 12, padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text)', cursor: 'pointer' }}>
+              + Add row
+            </button>
+            <button onClick={() => fileRef.current?.click()} disabled={uploading}
+              style={{ fontSize: 12, padding: '6px 12px', borderRadius: 6, border: 'none', background: '#FFC40D', color: '#000', cursor: 'pointer', fontWeight: 600 }}>
+              {uploading ? 'Uploading…' : '↑ Upload CSV'}
+            </button>
+            <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={handleCsvUpload} />
+          </div>
+        )}
+      </div>
+
+      {/* CSV format hint */}
+      <div style={{ padding: '8px 20px', background: 'var(--dark)', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--muted)', fontFamily: '"IBM Plex Mono", monospace' }}>
+        CSV format: <span style={{ color: 'var(--amber)' }}>hostname, product, version, vendor, cpe</span>
+        &nbsp;(hostname and product required; cpe optional but improves NVD matching)
+      </div>
+
+      {/* Upload result */}
+      {uploadResult && (
+        <div style={{ padding: '8px 20px', background: 'rgba(52,211,153,0.08)', borderBottom: '1px solid #34d39933', fontSize: 12, color: '#34d399' }}>
+          ✓ Imported {uploadResult.inserted} entries
+          {uploadResult.skipped > 0 && `, ${uploadResult.skipped} skipped`}
+          {uploadResult.errors?.length > 0 && (
+            <span style={{ color: '#fb923c' }}> · {uploadResult.errors.length} errors: {uploadResult.errors[0]}</span>
+          )}
+        </div>
+      )}
+      {uploadError && (
+        <div style={{ padding: '8px 20px', background: 'rgba(248,113,113,0.1)', borderBottom: '1px solid #f8717133', fontSize: 12, color: '#f87171' }}>
+          ✕ {uploadError}
+        </div>
+      )}
+
+      {/* Manual add form */}
+      {showForm && (
+        <form onSubmit={handleManualAdd} style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'flex-end' }}>
+          <div style={{ flex: '1 1 160px' }}>
+            <div className="mono-label" style={{ marginBottom: 4 }}>Asset *</div>
+            <select value={form.asset_id} onChange={e => setForm(f => ({ ...f, asset_id: e.target.value }))} style={INPUT} required>
+              <option value="">— select asset —</option>
+              {assets.map(a => <option key={a.asset_id} value={a.asset_id}>{a.hostname}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: '1 1 140px' }}>
+            <div className="mono-label" style={{ marginBottom: 4 }}>Product *</div>
+            <input style={INPUT} placeholder="e.g. log4j-core" value={form.product} onChange={e => setForm(f => ({ ...f, product: e.target.value }))} required />
+          </div>
+          <div style={{ flex: '1 1 100px' }}>
+            <div className="mono-label" style={{ marginBottom: 4 }}>Version</div>
+            <input style={INPUT} placeholder="2.14.1" value={form.version} onChange={e => setForm(f => ({ ...f, version: e.target.value }))} />
+          </div>
+          <div style={{ flex: '1 1 110px' }}>
+            <div className="mono-label" style={{ marginBottom: 4 }}>Vendor</div>
+            <input style={INPUT} placeholder="Apache" value={form.vendor} onChange={e => setForm(f => ({ ...f, vendor: e.target.value }))} />
+          </div>
+          <div style={{ flex: '2 1 220px' }}>
+            <div className="mono-label" style={{ marginBottom: 4 }}>CPE (optional)</div>
+            <input style={INPUT} placeholder="cpe:2.3:a:apache:log4j:2.14.1:*:*:*:*:*:*:*" value={form.cpe} onChange={e => setForm(f => ({ ...f, cpe: e.target.value }))} />
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="submit" disabled={saving}
+              style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#FFC40D', color: '#000', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
+              {saving ? 'Saving…' : 'Add'}
+            </button>
+            <button type="button" onClick={() => { setShowForm(false); setSaveError('') }}
+              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--dark)', color: 'var(--muted)', cursor: 'pointer', fontSize: 12 }}>
+              Cancel
+            </button>
+          </div>
+          {saveError && <div style={{ width: '100%', color: '#f87171', fontSize: 11 }}>{saveError}</div>}
+        </form>
+      )}
+
+      {/* Search */}
+      <div style={{ padding: '8px 20px', borderBottom: '1px solid var(--border)' }}>
+        <input style={{ ...INPUT, width: '100%', maxWidth: 360 }}
+          placeholder="Search by product, vendor, hostname…"
+          value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+      ) : software.length === 0 ? (
+        <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+          No software entries yet.
+          {canWrite && ' Upload a CSV or click "+ Add row" to get started.'}
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                {['Asset', 'Product', 'Version', 'Vendor', 'CPE', ''].map(h => (
+                  <th key={h} style={{ padding: '8px 14px', textAlign: 'left', fontFamily: '"IBM Plex Mono", monospace', fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)', fontWeight: 500 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {software.slice(0, 100).map((sw, i) => (
+                <tr key={sw.id} style={{ borderBottom: i < software.length - 1 ? '1px solid var(--border)' : 'none', background: i % 2 === 0 ? 'var(--dark)' : 'transparent' }}>
+                  <td style={{ padding: '7px 14px', fontFamily: '"IBM Plex Mono", monospace', color: 'var(--amber)', whiteSpace: 'nowrap' }}>{sw.hostname}</td>
+                  <td style={{ padding: '7px 14px', color: 'var(--text)', fontWeight: 500 }}>{sw.product}</td>
+                  <td style={{ padding: '7px 14px', fontFamily: '"IBM Plex Mono", monospace', color: 'var(--muted)' }}>{sw.version || '—'}</td>
+                  <td style={{ padding: '7px 14px', color: 'var(--muted)' }}>{sw.vendor || '—'}</td>
+                  <td style={{ padding: '7px 14px', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: 'var(--muted)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sw.cpe || ''}>{sw.cpe || '—'}</td>
+                  <td style={{ padding: '7px 14px' }}>
+                    {canWrite && (
+                      <button onClick={() => handleDelete(sw)}
+                        style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #f8717133', background: 'rgba(248,113,113,0.08)', color: '#f87171', cursor: 'pointer' }}>
+                        ✕
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {software.length > 100 && (
+            <div style={{ padding: '8px 20px', color: 'var(--muted)', fontSize: 11, textAlign: 'center' }}>
+              Showing 100 of {software.length} — use search to filter
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -169,10 +576,23 @@ export default function ThreatAlerts() {
   const [total, setTotal]         = useState(0)
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState('')
-  const [showMatch, setShowMatch] = useState(false)
+  const [showMatch,   setShowMatch]   = useState(false)
+  const [showPromote, setShowPromote] = useState(false)
+  const [softwareCount, setSoftwareCount] = useState(0)
 
-  const { sorted: sortedAlerts, col: alertSortCol, dir: alertSortDir, toggle: toggleAlertSort } =
-    useSortable(alerts, 'cve_id')
+  // Server-side sort — clicking a header re-fetches with the new ORDER BY
+  const [alertSortCol, setAlertSortCol] = useState('is_kev')
+  const [alertSortDir, setAlertSortDir] = useState('desc')
+
+  function toggleAlertSort(col) {
+    if (col === alertSortCol) {
+      setAlertSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    } else {
+      setAlertSortCol(col)
+      setAlertSortDir('desc')
+    }
+    setPage(0)
+  }
 
   // Filters
   const [statusFilter, setStatusFilter]   = useState('open')
@@ -182,8 +602,10 @@ export default function ThreatAlerts() {
   const [page, setPage]                   = useState(0)
   const PAGE_SIZE = 50
 
-  // Inline action state: { [id]: 'working' | 'done' }
-  const [actionState, setActionState] = useState({})
+  // Inline status/promote state: { [id]: 'working' | 'done' }
+  const [actionState,   setActionState]   = useState({})
+  // Per-alert promote state: { [id]: 'promoting' | 'created' | 'exists' | 'error' }
+  const [promoteState,  setPromoteState]  = useState({})
 
   const loadSummary = useCallback(() => {
     fetchThreatSummary()
@@ -194,10 +616,12 @@ export default function ThreatAlerts() {
   const loadAlerts = useCallback(() => {
     setLoading(true); setError('')
     const params = {
-      status:     statusFilter || undefined,
-      alert_type: typeFilter   || undefined,
-      kev_only:   kevOnly      || undefined,
-      asset_id:   assetFilter  || undefined,
+      status:     statusFilter    || undefined,
+      alert_type: typeFilter      || undefined,
+      kev_only:   kevOnly         || undefined,
+      asset_id:   assetFilter     || undefined,
+      sort_by:    alertSortCol,
+      sort_dir:   alertSortDir,
       limit:      PAGE_SIZE,
       offset:     page * PAGE_SIZE,
     }
@@ -209,7 +633,7 @@ export default function ThreatAlerts() {
       })
       .catch(e => setError(e.response?.data?.detail || e.message))
       .finally(() => setLoading(false))
-  }, [statusFilter, typeFilter, kevOnly, assetFilter, page])
+  }, [statusFilter, typeFilter, kevOnly, assetFilter, alertSortCol, alertSortDir, page])
 
   useEffect(() => { loadSummary(); loadAlerts() }, [loadSummary, loadAlerts])
 
@@ -224,7 +648,24 @@ export default function ThreatAlerts() {
     }
   }
 
-  function onMatchDone() { loadAlerts(); loadSummary() }
+  function onMatchDone()   { loadAlerts(); loadSummary() }
+  function onPromoteDone() { loadAlerts(); loadSummary() }
+
+  async function handlePromoteAlert(alertId) {
+    setPromoteState(s => ({ ...s, [alertId]: 'promoting' }))
+    try {
+      const res = await promoteAlerts({ alert_ids: [alertId], grouping: 'by_cve' })
+      const d   = res.data?.data
+      const next = (d?.jobs_created ?? 0) > 0 ? 'created' : 'exists'
+      setPromoteState(s => ({ ...s, [alertId]: next }))
+    } catch {
+      setPromoteState(s => ({ ...s, [alertId]: 'error' }))
+    } finally {
+      setTimeout(() => setPromoteState(s => {
+        const n = { ...s }; delete n[alertId]; return n
+      }), 3000)
+    }
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
@@ -244,16 +685,45 @@ export default function ThreatAlerts() {
           </p>
         </div>
         {canWrite && (
-          <button
-            onClick={() => setShowMatch(true)}
-            className="px-4 py-2 rounded text-sm font-semibold flex items-center gap-2"
-            style={{ background: '#FFC40D', color: '#000', border: 'none', cursor: 'pointer' }}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M9.172 14.828a4 4 0 010-5.656m5.656 0a4 4 0 010 5.656M12 12h.01" />
-            </svg>
-            Run Match
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowMatch(true)}
+              className="px-4 py-2 rounded text-sm font-semibold flex items-center gap-2"
+              style={{ background: '#FFC40D', color: '#000', border: 'none', cursor: 'pointer' }}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M9.172 14.828a4 4 0 010-5.656m5.656 0a4 4 0 010 5.656M12 12h.01" />
+              </svg>
+              Run Match
+            </button>
+            <button
+              onClick={() => setShowPromote(true)}
+              disabled={!summary?.total_open}
+              title={!summary?.total_open ? 'No open alerts to promote' : `Promote ${summary.total_open} open alerts to remediation jobs`}
+              className="px-4 py-2 rounded text-sm font-semibold flex items-center gap-2"
+              style={{
+                background: summary?.total_open ? '#34d399' : 'var(--surface-2)',
+                color: summary?.total_open ? '#000' : 'var(--muted)',
+                border: `1px solid ${summary?.total_open ? '#34d399' : 'var(--border)'}`,
+                cursor: summary?.total_open ? 'pointer' : 'not-allowed',
+                opacity: summary?.total_open ? 1 : 0.5,
+                transition: 'all 0.15s',
+              }}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+              Promote to Jobs
+              {summary?.total_open > 0 && (
+                <span style={{
+                  background: 'rgba(0,0,0,0.2)', borderRadius: 10,
+                  padding: '1px 7px', fontSize: 10, fontFamily: '"IBM Plex Mono",monospace',
+                }}>
+                  {summary.total_open}
+                </span>
+              )}
+            </button>
+          </div>
         )}
       </div>
 
@@ -375,7 +845,7 @@ export default function ThreatAlerts() {
                 </td>
               </tr>
             )}
-            {!loading && sortedAlerts.map((alert, idx) => {
+            {!loading && alerts.map((alert, idx) => {
               const working = actionState[alert.id] === 'working'
               const epssStr = alert.epss_score != null
                 ? `${(alert.epss_score * 100).toFixed(1)}%`
@@ -474,30 +944,62 @@ export default function ThreatAlerts() {
 
                   {/* Actions */}
                   <td className="px-4 py-3">
-                    {canWrite && alert.status === 'open' && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleAction(alert.id, 'resolved')}
-                          disabled={working}
-                          title="Mark resolved"
-                          className="text-xs px-2 py-1 rounded"
-                          style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399',
-                                   border: '1px solid #34d39944', cursor: 'pointer', opacity: working ? 0.5 : 1 }}
-                        >
-                          Resolve
-                        </button>
-                        <button
-                          onClick={() => handleAction(alert.id, 'dismissed')}
-                          disabled={working}
-                          title="Dismiss alert"
-                          className="text-xs px-2 py-1 rounded"
-                          style={{ background: 'rgba(148,163,184,0.1)', color: 'var(--muted)',
-                                   border: '1px solid var(--border)', cursor: 'pointer', opacity: working ? 0.5 : 1 }}
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    )}
+                    {canWrite && alert.status === 'open' && (() => {
+                      const ps = promoteState[alert.id]
+                      const promoting = ps === 'promoting'
+                      const promoteLabel =
+                        promoting    ? '…'         :
+                        ps === 'created' ? '✓ Job created' :
+                        ps === 'exists'  ? '✓ Already a job' :
+                        ps === 'error'   ? '✗ Error' :
+                        '⬡ → Job'
+                      const promoteColor =
+                        ps === 'created' ? '#34d399' :
+                        ps === 'exists'  ? '#60a5fa' :
+                        ps === 'error'   ? '#f87171' :
+                        'var(--amber)'
+                      return (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <button
+                            onClick={() => handleAction(alert.id, 'resolved')}
+                            disabled={working}
+                            title="Mark resolved"
+                            className="text-xs px-2 py-1 rounded"
+                            style={{ background: 'rgba(52,211,153,0.1)', color: '#34d399',
+                                     border: '1px solid #34d39944', cursor: 'pointer', opacity: working ? 0.5 : 1 }}
+                          >
+                            Resolve
+                          </button>
+                          <button
+                            onClick={() => handleAction(alert.id, 'dismissed')}
+                            disabled={working}
+                            title="Dismiss alert"
+                            className="text-xs px-2 py-1 rounded"
+                            style={{ background: 'rgba(148,163,184,0.1)', color: 'var(--muted)',
+                                     border: '1px solid var(--border)', cursor: 'pointer', opacity: working ? 0.5 : 1 }}
+                          >
+                            Dismiss
+                          </button>
+                          <button
+                            onClick={() => handlePromoteAlert(alert.id)}
+                            disabled={promoting || !!ps}
+                            title="Promote this alert to a remediation job"
+                            className="text-xs px-2 py-1 rounded whitespace-nowrap"
+                            style={{
+                              background: `${promoteColor}15`,
+                              color: promoteColor,
+                              border: `1px solid ${promoteColor}44`,
+                              cursor: (promoting || !!ps) ? 'default' : 'pointer',
+                              opacity: promoting ? 0.7 : 1,
+                              fontFamily: '"IBM Plex Mono", monospace',
+                              fontSize: 10,
+                            }}
+                          >
+                            {promoteLabel}
+                          </button>
+                        </div>
+                      )
+                    })()}
                     {canWrite && alert.status !== 'open' && (
                       <button
                         onClick={() => handleAction(alert.id, 'open')}
@@ -552,11 +1054,24 @@ export default function ThreatAlerts() {
         </div>
       )}
 
+      {/* ── Software inventory ── */}
+      <SoftwarePanel canWrite={canWrite} onCountChange={setSoftwareCount} />
+
       {/* ── Match modal ── */}
       {showMatch && (
         <MatchModal
           onClose={() => setShowMatch(false)}
           onDone={onMatchDone}
+          softwareCount={softwareCount}
+        />
+      )}
+
+      {/* ── Promote modal ── */}
+      {showPromote && (
+        <PromoteModal
+          onClose={() => setShowPromote(false)}
+          onDone={onPromoteDone}
+          openAlertCount={summary?.total_open ?? 0}
         />
       )}
     </div>
