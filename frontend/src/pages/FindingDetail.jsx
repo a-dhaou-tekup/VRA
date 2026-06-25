@@ -101,11 +101,12 @@ function useBlastGraph({ canvasRef, graphData, onSelect, onZoomChange }) {
     ctx.scale(dpr, dpr)
     dimRef.current = { W, H }
 
-    // Scatter nodes in a ring to give the simulation a good start
+    // Fibonacci spiral — compact, avoids huge initial ring with many nodes
     const nodes = graphData.nodes.map((n, i) => {
-      const a = (i / Math.max(1, graphData.nodes.length)) * Math.PI * 2
-      const rr = Math.min(W, H) * 0.30
-      return { ...n, x: W / 2 + Math.cos(a) * rr, y: H / 2 + Math.sin(a) * rr, vx: 0, vy: 0, pinned: false }
+      const total = graphData.nodes.length
+      const theta = i * 2.399  // golden-angle spiral
+      const rr    = Math.sqrt(i + 1) * (total < 15 ? 30 : total < 40 ? 18 : 12)
+      return { ...n, x: W / 2 + Math.cos(theta) * rr, y: H / 2 + Math.sin(theta) * rr, vx: 0, vy: 0, pinned: false }
     })
     const nodeIndex = Object.fromEntries(nodes.map((n, i) => [n.id, i]))
     const links = (graphData.links || [])
@@ -118,17 +119,13 @@ function useBlastGraph({ canvasRef, graphData, onSelect, onZoomChange }) {
     transformRef.current = { x: W / 2, y: H / 2, scale: 1 }
     cbZoomRef.current?.(100)
 
-    // Fit viewport once the initial layout has settled
-    const fitTimer = setTimeout(() => fitToView(), 500)
-
     // ── Simulation constants ────────────────────────────────────────────────
-    // Tuned for fast convergence — graph should be still within ~3 s.
-    const REPULSION  = 2800   // node–node charge
-    const SPRING_LEN = 130   // edge rest length (px, world space)
-    const SPRING_K   = 0.018  // spring stiffness — soft springs overshoot less
-    const GRAVITY    = 0.005  // weak centre pull — less oscillation
-    const DAMPING    = 0.72   // aggressive friction — velocity absorbs fast
-    const ALPHA_STOP = 0.006  // below this the graph is visually still
+    const REPULSION  = 600    // compact charge — nodes cluster, not scatter
+    const SPRING_LEN = 45     // shorter rest length → tighter layout
+    const SPRING_K   = 0.06   // stiffer spring → faster convergence
+    const GRAVITY    = 0.025  // stronger centre pull → cluster near middle
+    const DAMPING    = 0.85   // high damping → settles quickly, no wobble
+    const ALPHA_STOP = 0.005
 
     function tick() {
       const alpha = alphaRef.current
@@ -211,6 +208,27 @@ function useBlastGraph({ canvasRef, graphData, onSelect, onZoomChange }) {
         ctx.closePath()
         ctx.fillStyle = isSel ? 'rgba(255,196,13,0.55)' : 'rgba(255,255,255,0.13)'
         ctx.fill()
+
+        // Edge label (only when zoomed in enough to read)
+        if (l.kind && t.scale > 0.3) {
+          const midX = (sx + ex) / 2, midY = (sy + ey) / 2
+          const angle = Math.atan2(ey - sy, ex - sx)
+          const flipped = angle > Math.PI / 2 || angle < -Math.PI / 2
+          const eSz = Math.max(5.5, 6.5 / t.scale)
+          const labelText = l.kind.replace(/_/g, ' ').toUpperCase()
+          ctx.save()
+          ctx.translate(midX, midY)
+          ctx.rotate(flipped ? angle + Math.PI : angle)
+          ctx.font = `${eSz}px "IBM Plex Mono",monospace`
+          ctx.textAlign = 'center'
+          const tw = ctx.measureText(labelText).width
+          const px = 3 / t.scale, py = 2 / t.scale
+          ctx.fillStyle = 'rgba(8,10,20,0.80)'
+          ctx.fillRect(-tw / 2 - px, -eSz - py, tw + px * 2, eSz + py * 2 + eSz * 0.25)
+          ctx.fillStyle = isSel ? 'rgba(255,196,13,0.90)' : 'rgba(255,255,255,0.42)'
+          ctx.fillText(labelText, 0, 0)
+          ctx.restore()
+        }
       }
 
       // ── Nodes ──────────────────────────────────────────────────────────────
@@ -291,11 +309,15 @@ function useBlastGraph({ canvasRef, graphData, onSelect, onZoomChange }) {
       ctx.fillText(`${pct}%`, W - 10, H - 10)
     }
 
+    let hasAutoFit = false
     function loop() {
-      // Always keep drawing so pan/zoom/hover stay responsive.
-      // Only run physics when the simulation is still alive.
       if (alphaRef.current > 0) tick()
       draw()
+      // Auto-fit once the simulation has fully settled
+      if (alphaRef.current === 0 && !hasAutoFit) {
+        hasAutoFit = true
+        fitToView()
+      }
       rafRef.current = requestAnimationFrame(loop)
     }
     rafRef.current = requestAnimationFrame(loop)
@@ -342,8 +364,6 @@ function useBlastGraph({ canvasRef, graphData, onSelect, onZoomChange }) {
         const { x: wx, y: wy } = toWorld(mx, my, transformRef.current)
         const nd = nodes[drag.nodeIdx]
         nd.x = wx; nd.y = wy; nd.vx = 0; nd.vy = 0; nd.pinned = true
-        // Wake the sim so neighbours re-settle around the moved node
-        if (alphaRef.current === 0) alphaRef.current = 0.25
       }
       if (!drag) {
         const ni = hitTest(mx, my, nodes, transformRef.current)
@@ -396,7 +416,6 @@ function useBlastGraph({ canvasRef, graphData, onSelect, onZoomChange }) {
 
     return () => {
       cancelAnimationFrame(rafRef.current)
-      clearTimeout(fitTimer)
       canvas.removeEventListener('wheel',      onWheel)
       canvas.removeEventListener('mousedown',  onMouseDown)
       canvas.removeEventListener('mousemove',  onMouseMove)
@@ -759,7 +778,7 @@ function BlastRadiusSection({ findingId }) {
       {/* ── Graph tab ── */}
       <div style={{ display: tab === 'graph' ? 'block' : 'none' }}>
         <div style={{
-          position: 'relative', width: '100%', height: 540,
+          position: 'relative', width: '100%', height: 680,
           background: 'var(--black)', borderRadius: '0 8px 8px 8px',
           border: '1px solid var(--border)', borderTop: 'none', overflow: 'hidden',
         }}>
@@ -899,7 +918,7 @@ export default function FindingDetail() {
   }, [id])
 
   return (
-    <div style={{ padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 22, maxWidth: 1200 }}>
+    <div style={{ padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
 
       {/* Breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--muted)' }}>

@@ -36,7 +36,7 @@ export default function JobsList() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [filters, setFilters] = useState({ status: '', risk_level: '', kev_only: false })
+  const [filters, setFilters] = useState({ status: '', risk_level: '', kev_only: false, created_after: '', created_before: '' })
   const [offset, setOffset] = useState(0)
   const LIMIT = 50
 
@@ -58,9 +58,11 @@ export default function JobsList() {
     setLoading(true)
     setError(null)
     const params = { limit: LIMIT, offset, sort_by: jobSortCol, sort_dir: jobSortDir }
-    if (filters.status)     params.status     = filters.status
-    if (filters.risk_level) params.risk_level = filters.risk_level
-    if (filters.kev_only)   params.kev_only   = true
+    if (filters.status)         params.status         = filters.status
+    if (filters.risk_level)     params.risk_level     = filters.risk_level
+    if (filters.kev_only)       params.kev_only       = true
+    if (filters.created_after)  params.created_after  = filters.created_after
+    if (filters.created_before) params.created_before = filters.created_before
     fetchJobs(params)
       .then((r) => {
         setJobs(r.data?.data ?? [])
@@ -132,7 +134,37 @@ export default function JobsList() {
           />
           <span className="text-sm" style={{ color: 'var(--text)' }}>KEV Only</span>
         </label>
+
+        {/* Date range */}
+        <div className="flex items-center gap-2">
+          <span className="mono-label">Created</span>
+          <input
+            type="date"
+            value={filters.created_after}
+            onChange={(e) => { setFilters(f => ({ ...f, created_after: e.target.value })); setOffset(0) }}
+            style={{ ...selectStyle, fontSize: 12, padding: '5px 8px', colorScheme: 'dark' }}
+            title="From (inclusive)"
+          />
+          <span style={{ color: 'var(--muted)', fontSize: 12 }}>→</span>
+          <input
+            type="date"
+            value={filters.created_before}
+            onChange={(e) => { setFilters(f => ({ ...f, created_before: e.target.value })); setOffset(0) }}
+            style={{ ...selectStyle, fontSize: 12, padding: '5px 8px', colorScheme: 'dark' }}
+            title="To (exclusive)"
+          />
+        </div>
+
         <button className="btn-ghost text-xs" onClick={load}>Refresh</button>
+        {(filters.status || filters.risk_level || filters.kev_only || filters.created_after || filters.created_before) && (
+          <button
+            className="btn-ghost text-xs"
+            style={{ color: 'var(--muted)' }}
+            onClick={() => { setFilters({ status: '', risk_level: '', kev_only: false, created_after: '', created_before: '' }); setOffset(0) }}
+          >
+            Reset
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -155,7 +187,7 @@ export default function JobsList() {
                 <tr style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
                   {[['job_id','Job ID'],['main_product','Product'],['affected_asset_count','Assets'],
                     ['max_risk_level','Risk Level'],['kev_present','KEV'],['status','Status'],
-                    ['due_date','Due Date'],['sla_days','Days Left']].map(([c,h]) => (
+                    ['created_at','Created'],['due_date','Due Date'],['sla_days','Days Left']].map(([c,h]) => (
                     <SortTh key={c} col={c} sortCol={jobSortCol} sortDir={jobSortDir} onSort={toggleJobSort}
                       className="text-left py-3 px-4 mono-label"
                       style={{ color: jobSortCol === c ? 'var(--amber)' : undefined }}>{h}</SortTh>
@@ -194,6 +226,9 @@ export default function JobsList() {
                       )}
                     </td>
                     <td className="py-3 px-4"><StatusBadge status={job.status} /></td>
+                    <td className="py-3 px-4 font-mono text-xs" style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                      {job.created_at ? job.created_at.slice(0, 10) : '—'}
+                    </td>
                     <td className="py-3 px-4 font-mono text-xs" style={{ color: 'var(--muted)' }}>
                       {job.due_date ? job.due_date.slice(0, 10) : '—'}
                     </td>

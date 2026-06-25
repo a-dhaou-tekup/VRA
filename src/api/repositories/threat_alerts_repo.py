@@ -88,6 +88,9 @@ def get_all(
     alert_type: Optional[str] = None,
     asset_id: Optional[str] = None,
     is_kev: Optional[bool] = None,
+    cve_id: Optional[str] = None,
+    severity: Optional[str] = None,
+    matched_product: Optional[str] = None,
     sort_by:  str = "is_kev",
     sort_dir: str = "desc",
     limit: int = 200,
@@ -97,6 +100,7 @@ def get_all(
 
     sort_by  — one of the keys in _SORT_EXPRS (unknown values fall back to default)
     sort_dir — 'asc' | 'desc'  (anything else treated as 'desc')
+    asset_id — partial-match against hostname or IP address (LIKE search)
     """
     clauses = ["1=1"]
     params: list = []
@@ -105,9 +109,17 @@ def get_all(
     if alert_type:
         clauses.append("ta.alert_type = ?"); params.append(alert_type)
     if asset_id:
-        clauses.append("ta.asset_id = ?");  params.append(asset_id)
+        pat = f"%{asset_id}%"
+        clauses.append("(a.hostname LIKE ? OR a.ip_address LIKE ? OR ta.asset_id = ?)")
+        params.extend([pat, pat, asset_id])
     if is_kev is not None:
         clauses.append("ta.is_kev = ?");    params.append(int(is_kev))
+    if cve_id:
+        clauses.append("ta.cve_id LIKE ?"); params.append(f"%{cve_id}%")
+    if severity:
+        clauses.append("ta.severity = ?");  params.append(severity.upper())
+    if matched_product:
+        clauses.append("ta.matched_product LIKE ?"); params.append(f"%{matched_product}%")
 
     where = " AND ".join(clauses)
 
@@ -116,14 +128,15 @@ def get_all(
     direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
     order_by  = f"{sort_expr} {direction}, {_DEFAULT_ORDER}" if sort_expr else _DEFAULT_ORDER
 
+    base_from = "FROM threat_alerts ta JOIN assets a ON a.asset_id = ta.asset_id"
+
     count = conn.execute(
-        f"SELECT COUNT(*) FROM threat_alerts ta WHERE {where}", params
+        f"SELECT COUNT(*) {base_from} WHERE {where}", params
     ).fetchone()[0]
 
     rows = conn.execute(
         f"""SELECT ta.*, a.hostname, a.ip_address, a.business_unit, a.environment
-            FROM threat_alerts ta
-            JOIN assets a ON a.asset_id = ta.asset_id
+            {base_from}
             WHERE {where}
             ORDER BY {order_by}
             LIMIT ? OFFSET ?""",

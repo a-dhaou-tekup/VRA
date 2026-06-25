@@ -111,7 +111,7 @@ function ScoreBreakdown({ breakdown }) {
   const total = entries.reduce((s, e) => s + e.val, 0)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 780 }}>
       {entries.map(({ key, val, meta, pct }) => (
         <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           {/* top row: label · description · value */}
@@ -162,7 +162,7 @@ function ScoreBreakdown({ breakdown }) {
               fontFamily: '"IBM Plex Mono", monospace', fontSize: 9,
               color: 'var(--muted)',
             }}>
-              {Math.round(pct)}%
+              {pct.toFixed(1)}%
             </span>
           </div>
         </div>
@@ -635,7 +635,47 @@ export default function JobDetail() {
           <MetaItem label="Business Unit" value={job?.business_unit} />
           <MetaItem label="Owner" value={job?.business_owner || job?.owner} />
           <MetaItem label="Environment" value={job?.environment} />
-          <MetaItem label="Assets" value={job?.assets_count ?? job?.affected_asset_count} />
+          {/* Assets — show hostnames as links to the asset inventory */}
+          <div>
+            <div className="mono-label mb-1">Assets</div>
+            {(() => {
+              const hostnames = job?.asset_hostnames ?? []
+              if (hostnames.length === 0) {
+                return (
+                  <div className="text-sm" style={{ color: 'var(--text)' }}>
+                    {job?.assets_count ?? job?.affected_asset_count ?? '—'}
+                  </div>
+                )
+              }
+              return (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {hostnames.map(({ asset_id, hostname }) => (
+                    <a
+                      key={asset_id}
+                      href={`/assets?search=${encodeURIComponent(hostname)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        fontFamily: '"IBM Plex Mono", monospace',
+                        fontSize: 11,
+                        padding: '2px 8px',
+                        borderRadius: 4,
+                        background: 'rgba(78,143,175,0.12)',
+                        border: '1px solid rgba(78,143,175,0.35)',
+                        color: '#4e8faf',
+                        textDecoration: 'none',
+                        whiteSpace: 'nowrap',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(78,143,175,0.22)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(78,143,175,0.12)'}
+                    >
+                      {hostname || asset_id}
+                    </a>
+                  ))}
+                </div>
+              )
+            })()}
+          </div>
           <MetaItem label="CVEs" value={job?.cve_count} />
           <MetaItem label="SLA Days" value={job?.sla_override_days ? `${job.sla_override_days}d (custom)` : job?.sla_days} />
           <MetaItem label="Due Date" value={job?.due_date ? job.due_date.slice(0, 10) : null} />

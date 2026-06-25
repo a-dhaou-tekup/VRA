@@ -104,9 +104,50 @@ async def _generate_sse(
 
         # ── 2. Retrieve relevant docs ─────────────────────────────────────────
         recent_turns = get_recent_turns(conn, conversation_id, n=4)
-        retrieval_query = build_chat_query(user_message, recent_turns[:-1])  # exclude just-saved turn
+
+        # Parse CVE IDs from the job so BM25 anchors on the right advisories
+        import json as _json
+        try:
+            _cve_ids = _json.loads(job.get("cve_list") or "[]")
+            if not isinstance(_cve_ids, list):
+                _cve_ids = []
+        except Exception:
+            _cve_ids = []
+
+        # Enrich job with affected software versions from linked threat alerts
+        # (answers questions like "what version is vulnerable?" without corpus docs)
+        try:
+            sw_rows = conn.execute(
+                """SELECT ta.cve_id, ta.matched_product, ta.matched_version,
+                          a.hostname, ta.severity
+                   FROM threat_alerts ta
+                   JOIN alert_jobs    aj ON ta.id = aj.alert_id
+                   JOIN assets        a  ON ta.asset_id = a.asset_id
+                   WHERE aj.job_id = ?
+                   ORDER BY ta.is_kev DESC, ta.epss_score DESC
+                   LIMIT 20""",
+                (job["job_id"],),
+            ).fetchall()
+            job["_affected_software"] = [
+                {
+                    "hostname":  r["hostname"],
+                    "cve_id":    r["cve_id"],
+                    "product":   r["matched_product"] or "",
+                    "version":   r["matched_version"] or "",
+                    "severity":  r["severity"] or "",
+                }
+                for r in sw_rows
+                if r["matched_product"] or r["matched_version"]
+            ]
+        except Exception as _exc:
+            logger.debug("Could not fetch affected software for job %s: %s", job["job_id"], _exc)
+            job["_affected_software"] = []
+
+        retrieval_query = build_chat_query(
+            user_message, recent_turns[:-1], cve_ids=_cve_ids
+        )
         logger.info(
-            "chat[%s] retrieval query: %.80s", conversation_id, retrieval_query
+            "chat[%s] retrieval query: %.120s", conversation_id, retrieval_query
         )
 
         candidates = multi_collection_search(retrieval_query, k=50)

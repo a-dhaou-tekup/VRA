@@ -24,16 +24,18 @@ _WRITERS = ("analyst", "remediation_owner", "admin")
 
 @router.get("")
 def list_jobs(
-    status:        Optional[str]  = Query(None),
-    risk_level:    Optional[str]  = Query(None),
-    business_unit: Optional[str]  = Query(None),
-    kev_only:      bool           = Query(False),
-    sort_by:       str            = Query("created_at"),
-    sort_dir:      str            = Query("desc"),
-    limit:         int            = Query(50, ge=1, le=1000),
-    offset:        int            = Query(0, ge=0),
-    conn:          sqlite3.Connection = Depends(get_db),
-    user:          dict           = Depends(get_current_user),
+    status:         Optional[str]  = Query(None),
+    risk_level:     Optional[str]  = Query(None),
+    business_unit:  Optional[str]  = Query(None),
+    kev_only:       bool           = Query(False),
+    created_after:  Optional[str]  = Query(None, description="ISO date YYYY-MM-DD inclusive lower bound"),
+    created_before: Optional[str]  = Query(None, description="ISO date YYYY-MM-DD exclusive upper bound"),
+    sort_by:        str            = Query("created_at"),
+    sort_dir:       str            = Query("desc"),
+    limit:          int            = Query(50, ge=1, le=1000),
+    offset:         int            = Query(0, ge=0),
+    conn:           sqlite3.Connection = Depends(get_db),
+    user:           dict           = Depends(get_current_user),
 ):
     jobs, total = jobs_repo.get_all_jobs(
         conn,
@@ -41,6 +43,8 @@ def list_jobs(
         risk_level=risk_level,
         business_unit=business_unit,
         kev_only=kev_only,
+        created_after=created_after,
+        created_before=created_before,
         sort_by=sort_by,
         sort_dir=sort_dir,
         limit=limit,

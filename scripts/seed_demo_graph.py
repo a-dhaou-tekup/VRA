@@ -33,19 +33,19 @@ NOW = datetime.now(timezone.utc).isoformat()
 # ── Service catalogue ─────────────────────────────────────────────────────────
 
 SERVICES = [
-    ("svc-web",   "Web Frontend",             "alice.martin@tek-up.tn",
+    ("svc-web",   "Web Frontend",             "alice.martin@oddobhf.com",
      "Public-facing web tier — nginx, static assets, reverse proxy"),
-    ("svc-api",   "API / Application Servers","bob.chen@tek-up.tn",
+    ("svc-api",   "API / Application Servers","bob.chen@oddobhf.com",
      "REST API layer — Spring Boot, FastAPI, microservices"),
-    ("svc-db",    "Database Cluster",         "diana.okafor@tek-up.tn",
+    ("svc-db",    "Database Cluster",         "diana.okafor@oddobhf.com",
      "Primary + replica relational databases (PostgreSQL/MySQL)"),
-    ("svc-cache", "Cache & Message Bus",      "diana.okafor@tek-up.tn",
+    ("svc-cache", "Cache & Message Bus",      "diana.okafor@oddobhf.com",
      "Redis in-memory cache and lightweight message brokering"),
-    ("svc-k8s",   "Kubernetes Platform",      "bob.chen@tek-up.tn",
+    ("svc-k8s",   "Kubernetes Platform",      "bob.chen@oddobhf.com",
      "Container orchestration — master and worker nodes"),
-    ("svc-net",   "Network & Security",       "carlos.ruiz@tek-up.tn",
+    ("svc-net",   "Network & Security",       "carlos.ruiz@oddobhf.com",
      "Perimeter firewalls, VPN gateways, switches, load balancers"),
-    ("svc-obs",   "Observability & SIEM",     "bob.chen@tek-up.tn",
+    ("svc-obs",   "Observability & SIEM",     "bob.chen@oddobhf.com",
      "ELK stack, Prometheus, Grafana, SIEM, centralised logging"),
 ]
 

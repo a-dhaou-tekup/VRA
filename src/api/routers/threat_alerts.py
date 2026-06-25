@@ -79,12 +79,15 @@ def alert_summary(
 
 @router.get("/threat-alerts")
 def list_alerts(
-    status_filter: Optional[str] = Query(None, alias="status"),
-    alert_type:    Optional[str] = Query(None),
-    asset_id:      Optional[str] = Query(None),
-    kev_only:      bool          = Query(False),
-    sort_by:       str           = Query("is_kev",  description="Column to sort by"),
-    sort_dir:      str           = Query("desc",    description="asc | desc"),
+    status_filter:   Optional[str] = Query(None, alias="status"),
+    alert_type:      Optional[str] = Query(None),
+    asset_id:        Optional[str] = Query(None, description="Partial match on hostname or IP"),
+    kev_only:        bool          = Query(False),
+    cve_id:          Optional[str] = Query(None, description="Partial match on CVE ID"),
+    severity:        Optional[str] = Query(None, description="Exact severity: CRITICAL|HIGH|MEDIUM|LOW"),
+    matched_product: Optional[str] = Query(None, description="Partial match on matched product name"),
+    sort_by:         str           = Query("is_kev",  description="Column to sort by"),
+    sort_dir:        str           = Query("desc",    description="asc | desc"),
     limit:  int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     conn:   sqlite3.Connection = Depends(get_db),
@@ -92,14 +95,17 @@ def list_alerts(
 ):
     rows, total = threat_alerts_repo.get_all(
         conn,
-        status     = status_filter or "open",
-        alert_type = alert_type,
-        asset_id   = asset_id,
-        is_kev     = True if kev_only else None,
-        sort_by    = sort_by,
-        sort_dir   = sort_dir,
-        limit      = limit,
-        offset     = offset,
+        status          = status_filter or "open",
+        alert_type      = alert_type,
+        asset_id        = asset_id,
+        is_kev          = True if kev_only else None,
+        cve_id          = cve_id,
+        severity        = severity,
+        matched_product = matched_product,
+        sort_by         = sort_by,
+        sort_dir        = sort_dir,
+        limit           = limit,
+        offset          = offset,
     )
     return {"data": rows, "total": total}
 

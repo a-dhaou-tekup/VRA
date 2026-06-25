@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   fetchAssets, createAsset, updateAsset, deleteAsset, bulkImportAssets,
   fetchFleetSummary, fetchAssetSoftware, addAssetSoftware,
@@ -375,25 +376,25 @@ function KevMatchesTab({ assets, focusAssetId, kevSort, toggleKevSort }) {
   if (fOs)      rows = rows.filter(r => r.os_version?.toLowerCase().includes(fOs.toLowerCase()))
   if (fSite)    rows = rows.filter(r => r.site?.toLowerCase().includes(fSite.toLowerCase()))
   if (fTeam)    rows = rows.filter(r => r.owning_team?.toLowerCase().includes(fTeam.toLowerCase()))
-  // Apply column sort to KEV rows
-  if (kevSort.col) {
-    rows = [...rows].sort((a, b) => {
-      const cmp = String(a[kevSort.col] ?? '').localeCompare(String(b[kevSort.col] ?? ''), undefined, { numeric: true, sensitivity: 'base' })
-      return kevSort.dir === 'asc' ? cmp : -cmp
-    })
-  }
   if (fBu)      rows = rows.filter(r => r.business_unit?.toLowerCase().includes(fBu.toLowerCase()))
   if (fCrit)    rows = rows.filter(r => r.criticality === fCrit)
   if (fExposed === 'yes') rows = rows.filter(r => r.internet_exposed)
   if (fExposed === 'no')  rows = rows.filter(r => !r.internet_exposed)
   if (fEnv)     rows = rows.filter(r => r.environment === fEnv)
 
-  // Sort: most KEV matches first, then by criticality
+  // Sort: column sort when active, otherwise default to most KEV matches → criticality
   const CRIT_ORDER = { critical: 0, high: 1, medium: 2, low: 3 }
-  rows.sort((a, b) =>
-    b.kev_alerts.length - a.kev_alerts.length ||
-    (CRIT_ORDER[a.criticality] ?? 4) - (CRIT_ORDER[b.criticality] ?? 4)
-  )
+  if (kevSort.col) {
+    rows = [...rows].sort((a, b) => {
+      const cmp = String(a[kevSort.col] ?? '').localeCompare(String(b[kevSort.col] ?? ''), undefined, { numeric: true, sensitivity: 'base' })
+      return kevSort.dir === 'asc' ? cmp : -cmp
+    })
+  } else {
+    rows.sort((a, b) =>
+      b.kev_alerts.length - a.kev_alerts.length ||
+      (CRIT_ORDER[a.criticality] ?? 4) - (CRIT_ORDER[b.criticality] ?? 4)
+    )
+  }
 
   const hasFilter = fSearch||fType||fPlatform||fOs||fSite||fTeam||fBu||fCrit||fExposed||fEnv
   const clearAll  = () => {
@@ -537,11 +538,13 @@ export default function Assets() {
   const canWrite  = ['analyst','remediation_owner','admin'].includes(role)
   const canDelete = role === 'admin'
 
+  const [urlParams] = useSearchParams()
+
   const [assets, setAssets]   = useState([])
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
-  const [search, setSearch]   = useState('')
+  const [search, setSearch]   = useState(() => urlParams.get('search') || '')
   const [fleetEnv, setFleetEnv]  = useState('')
   const [fleetSite, setFleetSite] = useState('')
   const [fleetTeam, setFleetTeam] = useState('')

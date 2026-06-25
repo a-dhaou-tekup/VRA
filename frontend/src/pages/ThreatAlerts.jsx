@@ -565,6 +565,265 @@ function SoftwarePanel({ canWrite, onCountChange }) {
   )
 }
 
+// ─── FilterChipBar ─────────────────────────────────────────────────────────────
+
+const CHIP_DEFS = [
+  { key: 'hostname',        label: 'Hostname / IP', type: 'text',          placeholder: 'e.g. prod-dc-01' },
+  { key: 'cve_id',          label: 'CVE ID',         type: 'text',          placeholder: 'e.g. CVE-2021-44228' },
+  { key: 'severity',        label: 'Severity',       type: 'options',       options: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] },
+  { key: 'matched_product', label: 'Software',       type: 'options_search' },
+]
+
+const SEV_COLOR = { CRITICAL: '#f87171', HIGH: '#fb923c', MEDIUM: '#fbbf24', LOW: '#60a5fa' }
+
+function FilterChipBar({ chips, onChange, onApply, onReset, softwareOptions }) {
+  const [openPicker, setOpenPicker]   = useState(null)
+  const [inputText, setInputText]     = useState('')
+  const barRef = useRef()
+
+  useEffect(() => {
+    function outside(e) {
+      if (barRef.current && !barRef.current.contains(e.target)) setOpenPicker(null)
+    }
+    document.addEventListener('mousedown', outside)
+    return () => document.removeEventListener('mousedown', outside)
+  }, [])
+
+  const activeChips = CHIP_DEFS.filter(d => chips[d.key])
+  const hiddenDefs  = CHIP_DEFS.filter(d => !chips[d.key])
+  const isDirty     = activeChips.length > 0
+
+  function openPick(key) {
+    setInputText(chips[key] || '')
+    setOpenPicker(p => p === key ? null : key)
+  }
+
+  function confirmText(key) {
+    const v = inputText.trim()
+    if (v) onChange({ ...chips, [key]: v })
+    setOpenPicker(null); setInputText('')
+  }
+
+  function selectOpt(key, val) {
+    onChange({ ...chips, [key]: val })
+    setOpenPicker(null); setInputText('')
+  }
+
+  function removeChip(key) { onChange({ ...chips, [key]: '' }) }
+
+  const SEL_BTN = {
+    padding: '5px 8px', borderRadius: 4, border: 'none',
+    background: 'none', cursor: 'pointer', textAlign: 'left',
+    color: 'var(--text)', fontSize: 12, width: '100%',
+    transition: 'background 0.1s',
+  }
+
+  return (
+    <div ref={barRef} style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+
+      {/* ── Active chips ── */}
+      {activeChips.map(def => {
+        const val   = chips[def.key]
+        const color = def.key === 'severity' ? (SEV_COLOR[val] || 'var(--amber)') : 'var(--amber)'
+        return (
+          <span key={def.key} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '3px 10px 3px 8px', borderRadius: 14,
+            background: `${color}18`, border: `1px solid ${color}44`,
+            color, fontSize: 12, fontFamily: '"IBM Plex Mono", monospace',
+            whiteSpace: 'nowrap',
+          }}>
+            <span style={{ color: 'var(--muted)', fontSize: 10, marginRight: 1 }}>{def.label}:</span>
+            {val}
+            <button onClick={() => removeChip(def.key)} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color, padding: '0 0 0 3px', fontSize: 15, lineHeight: 1, display: 'flex', alignItems: 'center',
+            }}>×</button>
+          </span>
+        )
+      })}
+
+      {/* ── Add-filter buttons ── */}
+      {hiddenDefs.map(def => {
+        const isOpen = openPicker === def.key
+        const opts   = def.key === 'matched_product' ? softwareOptions : (def.options || [])
+        return (
+          <div key={def.key} style={{ position: 'relative' }}>
+            <button onClick={() => openPick(def.key)} style={{
+              fontSize: 11, padding: '3px 10px', borderRadius: 14,
+              border: `1px solid ${isOpen ? 'var(--amber)' : 'var(--border)'}`,
+              background: isOpen ? 'rgba(255,196,13,0.08)' : 'var(--dark)',
+              color: isOpen ? 'var(--amber)' : 'var(--muted)',
+              cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.15s',
+            }}>
+              + {def.label}
+            </button>
+
+            {isOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 200,
+                background: 'var(--surface)', border: '1px solid var(--border)',
+                borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+                minWidth: 210, maxWidth: 290, padding: 10,
+              }}>
+                {def.type === 'text' && (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input autoFocus value={inputText}
+                      onChange={e => setInputText(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') confirmText(def.key); if (e.key === 'Escape') setOpenPicker(null) }}
+                      placeholder={def.placeholder}
+                      style={{ flex: 1, background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 6, padding: '5px 8px', fontSize: 12 }}
+                    />
+                    <button onClick={() => confirmText(def.key)} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', background: '#FFC40D', color: '#000', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>Add</button>
+                  </div>
+                )}
+
+                {def.type === 'options' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {def.options.map(opt => {
+                      const c = SEV_COLOR[opt] || 'var(--text)'
+                      return (
+                        <button key={opt} onClick={() => selectOpt(def.key, opt)}
+                          style={{ ...SEL_BTN, color: c, display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6 }}
+                          onMouseEnter={e => e.currentTarget.style.background = `${c}12`}
+                          onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                        >
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: c, flexShrink: 0 }} />
+                          <span style={{ fontWeight: 500, fontSize: 13 }}>{opt}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {def.type === 'options_search' && (
+                  <div>
+                    <input autoFocus value={inputText}
+                      onChange={e => setInputText(e.target.value)}
+                      placeholder="Search software…"
+                      style={{ width: '100%', background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 6, padding: '5px 8px', fontSize: 12, marginBottom: 6, boxSizing: 'border-box' }}
+                    />
+                    <div style={{ maxHeight: 170, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {(inputText
+                        ? opts.filter(o => o.toLowerCase().includes(inputText.toLowerCase()))
+                        : opts
+                      ).slice(0, 25).map(opt => (
+                        <button key={opt} onClick={() => selectOpt(def.key, opt)}
+                          style={SEL_BTN}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--dark)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                      {inputText && !opts.some(o => o.toLowerCase().includes(inputText.toLowerCase())) && (
+                        <button
+                          onClick={() => { onChange({ ...chips, [def.key]: inputText }); setOpenPicker(null); setInputText('') }}
+                          style={{ ...SEL_BTN, color: 'var(--amber)', border: '1px dashed var(--border)', borderRadius: 4, padding: '5px 8px' }}
+                        >
+                          Use "{inputText}"
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      {/* ── Apply / Reset ── */}
+      {isDirty && (
+        <button onClick={onApply} style={{
+          marginLeft: 4, fontSize: 12, padding: '4px 14px', borderRadius: 6,
+          border: 'none', background: '#FFC40D', color: '#000', cursor: 'pointer', fontWeight: 600,
+        }}>
+          Apply
+        </button>
+      )}
+      <button onClick={onReset} style={{
+        fontSize: 12, padding: '4px 10px', borderRadius: 6,
+        border: '1px solid var(--border)', background: 'var(--dark)',
+        color: 'var(--muted)', cursor: 'pointer', marginLeft: isDirty ? 0 : 'auto',
+      }}>
+        Reset
+      </button>
+    </div>
+  )
+}
+
+
+// ─── Pagination ────────────────────────────────────────────────────────────────
+
+function Pagination({ page, totalPages, total, pageSize, onChange }) {
+  const [jumpVal, setJumpVal] = useState('')
+
+  function pageNums() {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i)
+    const out = [0]
+    if (page > 3)              out.push('...')
+    const lo = Math.max(1, page - 2)
+    const hi = Math.min(totalPages - 2, page + 2)
+    for (let i = lo; i <= hi; i++) out.push(i)
+    if (page < totalPages - 4) out.push('...')
+    out.push(totalPages - 1)
+    return out
+  }
+
+  function jump(e) {
+    e.preventDefault()
+    const n = parseInt(jumpVal, 10)
+    if (!isNaN(n) && n >= 1 && n <= totalPages) { onChange(n - 1); setJumpVal('') }
+  }
+
+  const start = page * pageSize + 1
+  const end   = Math.min((page + 1) * pageSize, total)
+
+  const BTN_BASE = { borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontSize: 12, padding: '4px 8px', fontFamily: '"IBM Plex Mono", monospace' }
+
+  return (
+    <div className="flex items-center justify-between text-sm" style={{ color: 'var(--muted)' }}>
+      <span style={{ fontSize: 12 }}>Showing {start}–{end} of {total}</span>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+        <button onClick={() => onChange(Math.max(0, page - 1))} disabled={page === 0}
+          style={{ ...BTN_BASE, padding: '4px 10px', color: page === 0 ? 'var(--muted)' : 'var(--text)', cursor: page === 0 ? 'default' : 'pointer' }}>
+          ← Prev
+        </button>
+
+        {pageNums().map((p, i) =>
+          p === '...'
+            ? <span key={`dots-${i}`} style={{ padding: '0 2px', color: 'var(--muted)', fontSize: 12 }}>…</span>
+            : <button key={p} onClick={() => onChange(p)} style={{
+                ...BTN_BASE, minWidth: 32, textAlign: 'center',
+                border: `1px solid ${p === page ? 'var(--amber)' : 'var(--border)'}`,
+                background: p === page ? 'rgba(255,196,13,0.1)' : 'var(--surface)',
+                color: p === page ? 'var(--amber)' : 'var(--text)',
+                cursor: p === page ? 'default' : 'pointer',
+              }}>
+                {p + 1}
+              </button>
+        )}
+
+        <button onClick={() => onChange(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1}
+          style={{ ...BTN_BASE, padding: '4px 10px', color: page >= totalPages - 1 ? 'var(--muted)' : 'var(--text)', cursor: page >= totalPages - 1 ? 'default' : 'pointer' }}>
+          Next →
+        </button>
+
+        <form onSubmit={jump} style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>Go to</span>
+          <input type="number" min={1} max={totalPages} value={jumpVal} onChange={e => setJumpVal(e.target.value)}
+            style={{ width: 48, background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 6, padding: '3px 6px', fontSize: 12, fontFamily: '"IBM Plex Mono", monospace', textAlign: 'center' }}
+          />
+          <button type="submit" style={{ ...BTN_BASE, color: 'var(--text)', padding: '3px 8px' }}>Go</button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ThreatAlerts() {
@@ -598,9 +857,27 @@ export default function ThreatAlerts() {
   const [statusFilter, setStatusFilter]   = useState('open')
   const [typeFilter, setTypeFilter]       = useState('')
   const [kevOnly, setKevOnly]             = useState(false)
-  const [assetFilter, setAssetFilter]     = useState('')
   const [page, setPage]                   = useState(0)
   const PAGE_SIZE = 50
+
+  // Chip-based advanced filters — "pending" = what's shown in the bar,
+  // "applied" = what's actually sent to the API (committed on Apply).
+  const EMPTY_CHIPS = { hostname: '', cve_id: '', severity: '', matched_product: '' }
+  const [pendingChips, setPendingChips]   = useState(EMPTY_CHIPS)
+  const [appliedChips, setAppliedChips]   = useState(EMPTY_CHIPS)
+
+  // Software options for the chip dropdown (distinct product names)
+  const [softwareOptions, setSoftwareOptions] = useState([])
+
+  useEffect(() => {
+    fetchAllSoftware({ limit: 500 })
+      .then(r => {
+        const rows = r.data?.data ?? []
+        const uniq = [...new Set(rows.map(s => s.product).filter(Boolean))].sort()
+        setSoftwareOptions(uniq)
+      })
+      .catch(() => {})
+  }, [])
 
   // Inline status/promote state: { [id]: 'working' | 'done' }
   const [actionState,   setActionState]   = useState({})
@@ -616,14 +893,17 @@ export default function ThreatAlerts() {
   const loadAlerts = useCallback(() => {
     setLoading(true); setError('')
     const params = {
-      status:     statusFilter    || undefined,
-      alert_type: typeFilter      || undefined,
-      kev_only:   kevOnly         || undefined,
-      asset_id:   assetFilter     || undefined,
-      sort_by:    alertSortCol,
-      sort_dir:   alertSortDir,
-      limit:      PAGE_SIZE,
-      offset:     page * PAGE_SIZE,
+      status:          statusFilter              || undefined,
+      alert_type:      typeFilter               || undefined,
+      kev_only:        kevOnly                  || undefined,
+      asset_id:        appliedChips.hostname    || undefined,
+      cve_id:          appliedChips.cve_id      || undefined,
+      severity:        appliedChips.severity    || undefined,
+      matched_product: appliedChips.matched_product || undefined,
+      sort_by:         alertSortCol,
+      sort_dir:        alertSortDir,
+      limit:           PAGE_SIZE,
+      offset:          page * PAGE_SIZE,
     }
     fetchThreatAlerts(params)
       .then(r => {
@@ -633,7 +913,7 @@ export default function ThreatAlerts() {
       })
       .catch(e => setError(e.response?.data?.detail || e.message))
       .finally(() => setLoading(false))
-  }, [statusFilter, typeFilter, kevOnly, assetFilter, alertSortCol, alertSortDir, page])
+  }, [statusFilter, typeFilter, kevOnly, appliedChips, alertSortCol, alertSortDir, page])
 
   useEffect(() => { loadSummary(); loadAlerts() }, [loadSummary, loadAlerts])
 
@@ -785,22 +1065,17 @@ export default function ThreatAlerts() {
           KEV only
         </label>
 
-        {/* Asset filter */}
-        <input
-          className="rounded px-3 py-1 text-sm flex-1 min-w-[160px]"
-          style={{ background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--text)' }}
-          placeholder="Filter by asset hostname / IP…"
-          value={assetFilter}
-          onChange={e => { setAssetFilter(e.target.value); setPage(0) }}
+        {/* Chip-based advanced filters */}
+        <FilterChipBar
+          chips={pendingChips}
+          onChange={chips => { setPendingChips(chips) }}
+          onApply={() => { setAppliedChips({ ...pendingChips }); setPage(0) }}
+          onReset={() => {
+            setStatusFilter('open'); setTypeFilter(''); setKevOnly(false)
+            setPendingChips(EMPTY_CHIPS); setAppliedChips(EMPTY_CHIPS); setPage(0)
+          }}
+          softwareOptions={softwareOptions}
         />
-
-        <button
-          onClick={() => { setStatusFilter('open'); setTypeFilter(''); setKevOnly(false); setAssetFilter(''); setPage(0) }}
-          className="text-xs px-3 py-1 rounded"
-          style={{ background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--muted)', cursor: 'pointer' }}
-        >
-          Reset
-        </button>
       </div>
 
       {/* ── Error ── */}
@@ -808,6 +1083,17 @@ export default function ThreatAlerts() {
         <div className="px-4 py-3 rounded" style={{ background: 'rgba(248,113,113,0.1)', color: '#f87171', border: '1px solid #f8717133' }}>
           {error}
         </div>
+      )}
+
+      {/* ── Pagination (top) ── */}
+      {totalPages > 1 && (
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={total}
+          pageSize={PAGE_SIZE}
+          onChange={setPage}
+        />
       )}
 
       {/* ── Table ── */}
@@ -1023,35 +1309,13 @@ export default function ThreatAlerts() {
 
       {/* ── Pagination ── */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-sm" style={{ color: 'var(--muted)' }}>
-          <span>
-            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPage(p => Math.max(0, p - 1))}
-              disabled={page === 0}
-              className="px-3 py-1 rounded text-xs"
-              style={{ background: 'var(--surface)', border: '1px solid var(--border)',
-                       color: page === 0 ? 'var(--muted)' : 'var(--text)', cursor: page === 0 ? 'default' : 'pointer' }}
-            >
-              ← Prev
-            </button>
-            <span className="px-3 py-1" style={{ fontFamily: '"IBM Plex Mono", monospace' }}>
-              {page + 1} / {totalPages}
-            </span>
-            <button
-              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-              disabled={page >= totalPages - 1}
-              className="px-3 py-1 rounded text-xs"
-              style={{ background: 'var(--surface)', border: '1px solid var(--border)',
-                       color: page >= totalPages - 1 ? 'var(--muted)' : 'var(--text)',
-                       cursor: page >= totalPages - 1 ? 'default' : 'pointer' }}
-            >
-              Next →
-            </button>
-          </div>
-        </div>
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={total}
+          pageSize={PAGE_SIZE}
+          onChange={setPage}
+        />
       )}
 
       {/* ── Software inventory ── */}

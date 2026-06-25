@@ -53,6 +53,8 @@ def get_all_jobs(
     risk_level: Optional[str] = None,
     business_unit: Optional[str] = None,
     kev_only: bool = False,
+    created_after: Optional[str] = None,
+    created_before: Optional[str] = None,
     sort_by:  str = "created_at",
     sort_dir: str = "desc",
     limit: int = 200,
@@ -62,10 +64,12 @@ def get_all_jobs(
     clauses: list[str] = []
     params: list = []
 
-    if status:        clauses.append("status = ?");        params.append(status)
-    if risk_level:    clauses.append("max_risk_level = ?"); params.append(risk_level)
-    if business_unit: clauses.append("business_unit = ?"); params.append(business_unit)
-    if kev_only:      clauses.append("kev_present = 1")
+    if status:          clauses.append("status = ?");           params.append(status)
+    if risk_level:      clauses.append("max_risk_level = ?");   params.append(risk_level)
+    if business_unit:   clauses.append("business_unit = ?");    params.append(business_unit)
+    if kev_only:        clauses.append("kev_present = 1")
+    if created_after:   clauses.append("created_at >= ?");      params.append(created_after)
+    if created_before:  clauses.append("created_at < ?");       params.append(created_before)
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
@@ -84,7 +88,27 @@ def get_all_jobs(
 def get_job_by_id(conn: sqlite3.Connection, job_id: str) -> dict | None:
     cursor = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
     row = cursor.fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    job = dict(row)
+    # Enrich with asset hostnames so the UI can show host names instead of IDs
+    try:
+        asset_ids = json.loads(job.get("asset_ids") or "[]")
+        if asset_ids:
+            ph = ",".join("?" * len(asset_ids))
+            rows = conn.execute(
+                f"SELECT asset_id, hostname FROM assets WHERE asset_id IN ({ph})",
+                asset_ids,
+            ).fetchall()
+            job["asset_hostnames"] = [
+                {"asset_id": r["asset_id"], "hostname": r["hostname"]}
+                for r in rows
+            ]
+        else:
+            job["asset_hostnames"] = []
+    except Exception:
+        job["asset_hostnames"] = []
+    return job
 
 
 def get_job_by_fingerprint(conn: sqlite3.Connection, fingerprint: str) -> dict | None:

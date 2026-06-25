@@ -48,3 +48,17 @@ csv_generic:
     - hostname
     - cvss_base_score
     - severity
+
+# ── ODDO BHF internal RT scanner export ──────────────────────────────────────
+# Used by scanner_demo1.csv and scanner_demo_dmz.csv (demo upload scenario).
+# Column count (9) must exceed all other entries so best-match selects this one.
+oddo_bhf:
+  CVE_References: cve_id
+  Target_FQDN: hostname
+  Target_IPv4: ip_address
+  CVSS3_Score: cvss_base_score
+  Risk_Rating: severity
+  Vulnerability_Title: vuln_title
+  Plugin_Group: plugin_family
+  First_Detected: first_seen
+  Last_Scanned: last_seen

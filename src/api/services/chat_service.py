@@ -243,18 +243,27 @@ def write_audit_event(
 
 # ── Retrieval + prompt ────────────────────────────────────────────────────────
 
-def build_chat_query(user_message: str, recent_turns: list[dict]) -> str:
-    """Sliding-window retrieval query: current user message + previous user turn.
+def build_chat_query(
+    user_message: str,
+    recent_turns: list[dict],
+    cve_ids: list[str] | None = None,
+) -> str:
+    """Sliding-window retrieval query: CVE IDs + current message + previous user turn.
 
-    We deliberately use only the last user turn (not the full history) to
-    keep the retrieval signal tight.  The full conversation history goes into
-    the prompt separately.
+    CVE IDs are prepended so BM25 keyword matching anchors on the right
+    advisories before semantic similarity runs.  Without them a generic
+    question like "how does this work?" retrieves similar-sounding CVEs
+    from unrelated products.
     """
     prev_user = next(
         (t["content"] for t in reversed(recent_turns) if t["role"] == "user"),
         "",
     )
-    parts = [user_message]
+    parts: list[str] = []
+    if cve_ids:
+        # Up to 4 CVE IDs as the lead retrieval signal
+        parts.append(" ".join(cve_ids[:4]))
+    parts.append(user_message)
     if prev_user and prev_user != user_message:
         parts.append(prev_user)
     return " ".join(parts)
@@ -264,11 +273,15 @@ _SYSTEM_PROMPT = (
     "You are a security remediation assistant helping an analyst understand "
     "a specific vulnerability remediation job.\n"
     "Rules:\n"
-    "1. Ground every claim in the retrieved sources. Cite inline as [source_class:source_id].\n"
-    "2. If the sources do not contain the answer, say so explicitly — do not invent facts.\n"
+    "1. Prefer information from the retrieved sources. Cite inline as [source_class:source_id].\n"
+    "2. If the retrieved sources lack specific details, answer from your training knowledge "
+    "but clearly prefix that section with '**From training knowledge:**' so the analyst "
+    "knows it is not corpus-verified. Never fabricate CVE IDs, CVSS scores, or vendor "
+    "patch URLs — state those only if you are certain.\n"
     "3. Be concise and actionable. Prefer bullet points for steps.\n"
-    "4. The conversation history is provided for context; prefer information from "
-    "the retrieved sources over memory of prior turns."
+    "4. Always address the specific CVE(s) listed in the job context, not generic advice.\n"
+    "5. The conversation history is provided for continuity; retrieved sources take "
+    "precedence over prior turns."
 )
 
 
@@ -299,6 +312,25 @@ def build_chat_prompt(
         f"Status: {job.get('status', 'N/A')}",
         f"KEV Present: {bool(job.get('kev_present', False))}",
     ]
+
+    # Inject detected software versions from threat_alerts (set in chat.py)
+    affected = job.get("_affected_software") or []
+    if affected:
+        meta_lines.append("")
+        meta_lines.append("Affected Software (detected on hosts):")
+        for sw in affected:
+            parts = []
+            if sw.get("hostname"):
+                parts.append(f"  Host: {sw['hostname']}")
+            if sw.get("cve_id"):
+                parts.append(f"CVE: {sw['cve_id']}")
+            if sw.get("product"):
+                parts.append(f"Product: {sw['product']}")
+            if sw.get("version"):
+                parts.append(f"Version: {sw['version']}")
+            if sw.get("severity"):
+                parts.append(f"Severity: {sw['severity']}")
+            meta_lines.append("  " + " | ".join(parts))
 
     # Retrieved chunks tagged with source
     context_lines: list[str] = []

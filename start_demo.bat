@@ -32,12 +32,12 @@ timeout /t 2 /nobreak >nul
 
 REM ── 2. Demo backend ───────────────────────────────────────────────────────
 echo  [2/3] Starting demo backend on :8001 ...
-start "VRA Demo Backend" cmd /k "set PYTHONIOENCODING=utf-8 && set JWT_SECRET_KEY=demo-8bcc5f6893289288bcd65f53e7e28360e9d6eb09 && set PLATFORM_DB_PATH=data/cache/demo.db && set API_PORT=8001 && set VRA_SKIP_SEED=true && python run_api.py"
+start "VRA Demo Backend" cmd /k "_demo_backend.cmd"
 timeout /t 4 /nobreak >nul
 
 REM ── 3. Demo frontend ──────────────────────────────────────────────────────
 echo  [3/3] Starting demo frontend on :5174 ...
-start "VRA Demo Frontend" cmd /k "cd frontend && set VITE_API_URL=http://localhost:8001 && npx vite --port 5174"
+start "VRA Demo Frontend" cmd /k "cd frontend && npx vite --port 5174 --mode demo"
 
 echo.
 echo  All three windows launched.  Browser: http://localhost:5174

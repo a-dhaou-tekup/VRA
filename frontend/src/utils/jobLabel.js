@@ -1,54 +1,43 @@
 /**
- * Compute the human-readable job label:
- *   [first_asset_id_8chars]_[risk_score]_[first_cve]_[DD/MM/YYYY]
+ * Compute a human-readable job title:
+ *   {product} — {hostname} — {first_cve} [+N more]
  *
- * Falls back gracefully when fields are missing.
+ * Falls back gracefully when fields are missing:
+ *   "Microsoft SharePoint Server — sharepoint-01 — CVE-2019-0604"
+ *   "Apache Log4j2 — prod-api-01 — CVE-2021-44228 +1 more"
+ *   "PAN-OS — CVE-2024-3400"   (no hostname available)
  */
 export function jobLabel(job) {
   if (!job) return ''
 
-  // ── First asset ID (first 8 chars) ────────────────────────────────────────
-  let assetPart = 'ASSET'
-  const assetIds = job.asset_ids
-  if (assetIds) {
-    try {
-      const parsed = typeof assetIds === 'string' ? JSON.parse(assetIds) : assetIds
-      const first  = Array.isArray(parsed) ? parsed[0] : String(assetIds).split(',')[0].trim()
-      if (first) assetPart = String(first).slice(0, 8).toUpperCase()
-    } catch {
-      assetPart = String(assetIds).split(',')[0].trim().slice(0, 8).toUpperCase()
-    }
+  const product = job.main_product || job.product_name || 'Unknown'
+
+  // First hostname from the enriched asset_hostnames array (added by backend)
+  let hostPart = ''
+  const hostnames = job.asset_hostnames
+  if (Array.isArray(hostnames) && hostnames.length > 0) {
+    hostPart = hostnames[0].hostname || ''
+    if (hostnames.length > 1) hostPart += ` +${hostnames.length - 1}`
   }
 
-  // ── Risk / CVSS score ──────────────────────────────────────────────────────
-  const score = job.risk_score_max ?? job.max_cvss_score ?? job.cvss_score ?? '?'
-  const scorePart = score !== '?' ? Number(score).toFixed(1) : '?'
-
-  // ── First CVE ──────────────────────────────────────────────────────────────
-  let cvePart = 'N/A'
+  // First CVE (+ count if multiple)
+  let cvePart = ''
   const cveRaw = job.cve_list ?? job.cves
   if (cveRaw) {
     try {
       const parsed = typeof cveRaw === 'string' ? JSON.parse(cveRaw) : cveRaw
-      const first  = Array.isArray(parsed) ? parsed[0] : String(cveRaw).split(',')[0].trim()
-      if (first) cvePart = String(first).trim()
+      const arr = Array.isArray(parsed)
+        ? parsed
+        : String(cveRaw).split(',').map(s => s.trim()).filter(Boolean)
+      if (arr.length > 0) {
+        cvePart = arr[0]
+        if (arr.length > 1) cvePart += ` +${arr.length - 1} more`
+      }
     } catch {
-      cvePart = String(cveRaw).split(',')[0].trim() || 'N/A'
+      cvePart = String(cveRaw).split(',')[0].trim()
     }
   }
 
-  // ── Date (DD/MM/YYYY) ──────────────────────────────────────────────────────
-  let datePart = '??/??/????'
-  const raw = job.job_created_at ?? job.created_at
-  if (raw) {
-    const d = new Date(raw)
-    if (!isNaN(d.getTime())) {
-      const dd   = String(d.getDate()).padStart(2, '0')
-      const mm   = String(d.getMonth() + 1).padStart(2, '0')
-      const yyyy = d.getFullYear()
-      datePart = `${dd}/${mm}/${yyyy}`
-    }
-  }
-
-  return `${assetPart}_${scorePart}_${cvePart}_${datePart}`
+  const parts = [product, hostPart, cvePart].filter(Boolean)
+  return parts.join(' — ')
 }

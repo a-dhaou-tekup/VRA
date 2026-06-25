@@ -358,41 +358,49 @@ def reprocess_upload(
 
 @router.get("/api/findings/manual/example")
 def get_example_payload():
-    """Return a real-CVE example payload showing the correct shape.
+    """Return the ODDO BHF demo manual-entry scenario.
 
-    All CVE IDs and CVSS scores below are real (sourced from CISA KEV + NVD).
-    Replace the hostnames with your actual assets.
+    Narrative: Three CVEs flagged by the FS-ISAC morning threat feed that the
+    Q2 scanner missed — two CISA KEV entries and one freshly published advisory.
+    The analyst enters them directly without waiting for the next scan cycle.
     """
     return {
         "data": {
-            "uploaded_by": "your-name",
+            "uploaded_by": "soc-analyst",
             "findings": [
                 {
-                    "cve_id":          "CVE-2024-3400",
-                    "hostname":        "vpn-gw-prod-01",
-                    "ip_address":      "10.0.0.5",
-                    "cvss_base_score": 10.0,
-                    "severity":        "critical",
-                    "vuln_title":      "PAN-OS Command Injection in GlobalProtect",
-                    "plugin_family":   "Firewalls",
+                    # CISA KEV — OpenSSH race-condition RCE, affects all Linux servers
+                    # running OpenSSH 8.5p1–9.7p1. Scored 8.1 but HIGH exploitation
+                    # probability given widespread PoC availability.
+                    "cve_id":          "CVE-2024-6387",
+                    "hostname":        "prod-db-primary-01",
+                    "ip_address":      "10.10.3.10",
+                    "cvss_base_score": 8.1,
+                    "severity":        "high",
+                    "vuln_title":      "OpenSSH regreSSHion — Unauthenticated RCE (race condition in signal handler)",
+                    "plugin_family":   "OS / Remote Services",
                 },
                 {
-                    "cve_id":          "CVE-2021-44228",
-                    "hostname":        "app-srv-prod-01",
-                    "ip_address":      "10.0.1.20",
-                    "cvss_base_score": 10.0,
+                    # CISA KEV — Zero-click Outlook NTLM hash theft, no user interaction.
+                    # Critical for ODDO BHF: finance workstations authenticate to Exchange.
+                    "cve_id":          "CVE-2023-23397",
+                    "hostname":        "workstation-fin-01",
+                    "ip_address":      "10.10.50.10",
+                    "cvss_base_score": 9.8,
                     "severity":        "critical",
-                    "vuln_title":      "Apache Log4j2 RCE (Log4Shell)",
-                    "plugin_family":   "Java",
+                    "vuln_title":      "Microsoft Outlook Zero-Click NTLM Hash Theft (CVE-2023-23397)",
+                    "plugin_family":   "Desktop Productivity",
                 },
                 {
-                    "cve_id":          "CVE-2024-21762",
+                    # New Fortinet advisory published today — same firewall as existing
+                    # CVE-2024-21762 finding, different attack surface (adjacent-network RCE).
+                    "cve_id":          "CVE-2025-58413",
                     "hostname":        "fortigate-fw-01",
-                    "ip_address":      "10.0.0.1",
-                    "cvss_base_score": 9.6,
-                    "severity":        "critical",
-                    "vuln_title":      "Fortinet FortiOS SSL-VPN OOB Write",
-                    "plugin_family":   "Firewalls",
+                    "ip_address":      "10.10.0.1",
+                    "cvss_base_score": 7.5,
+                    "severity":        "high",
+                    "vuln_title":      "FortiOS / FortiSASE Stack-Based Buffer Overflow — Adjacent RCE",
+                    "plugin_family":   "Network Appliances / Firewall",
                 },
             ],
         }

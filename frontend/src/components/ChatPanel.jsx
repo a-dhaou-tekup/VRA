@@ -267,8 +267,9 @@ export default function ChatPanel({ jobId, role }) {
 
   useEffect(() => { loadConversations() }, [loadConversations])
 
-  // Auto-scroll on new content
+  // Auto-scroll on new content — skip on initial empty mount
   useEffect(() => {
+    if (!turns.length && !streamText) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [turns, streamText])
 

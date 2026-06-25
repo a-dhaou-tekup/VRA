@@ -147,6 +147,9 @@ export default function Findings() {
   const [running,      setRunning]     = useState({})    // findingId → bool
   const [backfilling,  setBackfilling] = useState(false)
   const [backfillMsg,  setBackfillMsg] = useState('')
+  // null = idle; object = { total, done, errors, cancelled, finished }
+  const [bulkTriage,   setBulkTriage]  = useState(null)
+  const cancelRef = useRef(false)
 
   const { sorted: colSorted, col: sortCol, dir: sortDir, toggle: toggleSort } =
     useSortable(findings, 'created_at', 'desc')
@@ -194,12 +197,15 @@ export default function Findings() {
     return 0  // default: API order (newest first)
   })
 
-  // Filter — hide likely_false_positive below threshold
+  // Filter — hide findings the AI is >= threshold confident are false positives
   const visible = fpThreshold != null
-    ? sorted.filter(f => !(f.triage_class === 'likely_false_positive' && (f.confidence ?? 0) < fpThreshold))
+    ? sorted.filter(f => !(f.triage_class === 'likely_false_positive' && (f.confidence ?? 0) >= fpThreshold))
     : sorted
 
   const hiddenCount = sorted.length - visible.length
+
+  // Warn when filter is on but there are no triaged findings at all
+  const triagedCount = sorted.filter(f => f.triage_class != null).length
 
   const selectStyle = {
     background: 'var(--surface-2)', border: '1px solid var(--border)',
@@ -223,6 +229,31 @@ export default function Findings() {
     }
   }
 
+  const handleTriageAll = async () => {
+    const untriaged = findings.filter(f => !f.triage_class)
+    if (!untriaged.length) return
+    cancelRef.current = false
+    setBulkTriage({ total: untriaged.length, done: 0, errors: 0, cancelled: false, finished: false })
+
+    const BATCH = 3
+    let done = 0, errors = 0
+
+    for (let i = 0; i < untriaged.length; i += BATCH) {
+      if (cancelRef.current) {
+        setBulkTriage(s => ({ ...s, cancelled: true, finished: true }))
+        load()
+        return
+      }
+      const batch = untriaged.slice(i, i + BATCH)
+      const results = await Promise.allSettled(batch.map(f => triggerAutoTriage(f.id)))
+      results.forEach(r => r.status === 'fulfilled' ? done++ : errors++)
+      setBulkTriage({ total: untriaged.length, done, errors, cancelled: false, finished: false })
+    }
+
+    setBulkTriage(s => ({ ...s, finished: true }))
+    load()
+  }
+
   return (
     <div style={{ padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
@@ -235,6 +266,32 @@ export default function Findings() {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Triage All Untriaged */}
+          {(() => {
+            const untriagedCount = findings.filter(f => !f.triage_class).length
+            const isBulkRunning  = bulkTriage && !bulkTriage.finished
+            return (
+              <button
+                onClick={handleTriageAll}
+                disabled={isBulkRunning || untriagedCount === 0}
+                title={untriagedCount === 0 ? 'All findings are already triaged' : `Run AI triage on ${untriagedCount} untriaged findings`}
+                style={{
+                  padding: '6px 14px', borderRadius: 6, fontSize: 11,
+                  background: isBulkRunning ? 'rgba(255,196,13,0.08)' : 'transparent',
+                  border: `1px solid ${isBulkRunning ? 'rgba(255,196,13,0.4)' : untriagedCount === 0 ? 'var(--border)' : 'rgba(255,196,13,0.5)'}`,
+                  color: isBulkRunning ? 'var(--amber)' : untriagedCount === 0 ? 'var(--muted)' : 'var(--amber)',
+                  cursor: (isBulkRunning || untriagedCount === 0) ? 'default' : 'pointer',
+                  fontFamily: '"IBM Plex Mono", monospace',
+                  opacity: untriagedCount === 0 ? 0.4 : 1,
+                }}
+              >
+                {isBulkRunning
+                  ? `⏳ Triaging ${bulkTriage.done}/${bulkTriage.total}…`
+                  : `✨ Triage All Untriaged${untriagedCount > 0 ? ` (${untriagedCount})` : ''}`}
+              </button>
+            )
+          })()}
+
           <button
             onClick={handleBackfill}
             disabled={backfilling}
@@ -269,6 +326,75 @@ export default function Findings() {
         </div>
       )}
 
+      {/* Bulk triage progress panel */}
+      {bulkTriage && (
+        <div style={{
+          padding: '14px 18px', borderRadius: 10,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          {/* Top row: label + cancel/dismiss */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, color: 'var(--text)' }}>
+              {bulkTriage.cancelled
+                ? `Cancelled — ${bulkTriage.done} of ${bulkTriage.total} triaged`
+                : bulkTriage.finished
+                  ? `Done — ${bulkTriage.done} triaged${bulkTriage.errors > 0 ? `, ${bulkTriage.errors} errors` : ''}`
+                  : `Triaging ${bulkTriage.done} / ${bulkTriage.total} findings…`}
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {!bulkTriage.finished && !bulkTriage.cancelled && (
+                <button
+                  onClick={() => { cancelRef.current = true }}
+                  style={{
+                    padding: '3px 10px', borderRadius: 5, fontSize: 11,
+                    border: '1px solid var(--border)', background: 'var(--dark)',
+                    color: 'var(--muted)', cursor: 'pointer',
+                    fontFamily: '"IBM Plex Mono", monospace',
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
+              {(bulkTriage.finished || bulkTriage.cancelled) && (
+                <button
+                  onClick={() => setBulkTriage(null)}
+                  style={{
+                    padding: '3px 10px', borderRadius: 5, fontSize: 11,
+                    border: '1px solid var(--border)', background: 'var(--dark)',
+                    color: 'var(--muted)', cursor: 'pointer',
+                    fontFamily: '"IBM Plex Mono", monospace',
+                  }}
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div style={{ height: 6, borderRadius: 3, background: 'var(--dark)', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              width: `${bulkTriage.total > 0 ? (bulkTriage.done / bulkTriage.total) * 100 : 0}%`,
+              background: bulkTriage.cancelled ? 'var(--muted)'
+                : bulkTriage.errors > 0 ? '#fb923c'
+                : bulkTriage.finished ? '#34d399'
+                : 'var(--amber)',
+              borderRadius: 3,
+              transition: 'width 0.3s ease',
+            }} />
+          </div>
+
+          {/* Stats row */}
+          <div style={{ display: 'flex', gap: 16, fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: 'var(--muted)' }}>
+            <span style={{ color: '#34d399' }}>✓ {bulkTriage.done} done</span>
+            {bulkTriage.errors > 0 && <span style={{ color: '#f87171' }}>✗ {bulkTriage.errors} errors</span>}
+            <span>{bulkTriage.total - bulkTriage.done - bulkTriage.errors} remaining</span>
+          </div>
+        </div>
+      )}
+
       {/* Controls bar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
@@ -287,9 +413,8 @@ export default function Findings() {
 
         <div style={{ width: 1, height: 24, background: 'var(--border)' }} />
 
-        {/* Filter slider */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="mono-label">Hide false positives below</span>
+        {/* FP filter */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -297,8 +422,8 @@ export default function Findings() {
               onChange={e => setFpThreshold(e.target.checked ? 0.75 : null)}
               style={{ accentColor: 'var(--amber)', cursor: 'pointer' }}
             />
-            <span style={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: 'var(--muted)' }}>
-              Enable
+            <span className="mono-label" style={{ cursor: 'pointer' }}>
+              Hide FPs ≥
             </span>
           </label>
           {fpThreshold != null && (
@@ -307,7 +432,7 @@ export default function Findings() {
                 type="range" min="0.5" max="1.0" step="0.05"
                 value={fpThreshold}
                 onChange={e => setFpThreshold(parseFloat(e.target.value))}
-                style={{ width: 100, accentColor: 'var(--amber)', cursor: 'pointer' }}
+                style={{ width: 90, accentColor: 'var(--amber)', cursor: 'pointer' }}
               />
               <span style={{
                 fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, color: 'var(--amber)',
@@ -316,6 +441,16 @@ export default function Findings() {
                 {Math.round(fpThreshold * 100)}%
               </span>
             </>
+          )}
+          {fpThreshold != null && hiddenCount === 0 && triagedCount === 0 && (
+            <span style={{
+              fontFamily: '"IBM Plex Mono", monospace', fontSize: 10,
+              color: '#fbbf24', padding: '2px 8px',
+              background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 5,
+            }}
+            title="Run AI triage on findings to enable this filter">
+              ⚠ No triage data — run AI triage first
+            </span>
           )}
           {hiddenCount > 0 && (
             <span style={{
