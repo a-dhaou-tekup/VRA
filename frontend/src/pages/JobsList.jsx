@@ -217,7 +217,7 @@ export default function JobsList() {
                     <td className="py-3 px-4 font-mono text-xs" style={{ color: 'var(--muted)' }}>
                       {job.assets_count ?? '—'}
                     </td>
-                    <td className="py-3 px-4"><RiskBadge level={job.risk_level} /></td>
+                    <td className="py-3 px-4"><RiskBadge level={job.max_risk_level} /></td>
                     <td className="py-3 px-4 text-center">
                       {job.kev_count > 0 ? (
                         <span title="Known Exploited Vulnerability">🔴</span>

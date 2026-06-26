@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { fetchFindings, triggerAutoTriage, backfillFindings } from '../api/client'
 import { useSortable, SortTh } from '../utils/sortable'
 
@@ -138,6 +138,191 @@ const SORT_OPTIONS = [
 
 const PAGE_SIZE = 25
 
+const FILTER_COLS = [
+  { key: 'cve_id',    label: 'CVE ID'    },
+  { key: 'hostname',  label: 'Host'      },
+  { key: 'component', label: 'Component' },
+  { key: 'severity',  label: 'Severity'  },
+  { key: 'state',     label: 'State'     },
+]
+const EMPTY_FILTERS = { cve_id: [], hostname: [], component: [], severity: [], state: [] }
+
+// ── Filter bar ────────────────────────────────────────────────────────────────
+
+function FilterBar({ options, pending, setPending, active, setActive }) {
+  const [openKey, setOpenKey] = useState(null)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!openKey) return
+    function handler(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpenKey(null)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [openKey])
+
+  const hasActive  = FILTER_COLS.some(c => active[c.key]?.length > 0)
+  const hasPending = FILTER_COLS.some(c => pending[c.key]?.length > 0)
+
+  function toggle(key, val) {
+    setPending(p => {
+      const cur = p[key] || []
+      return { ...p, [key]: cur.includes(val) ? cur.filter(v => v !== val) : [...cur, val] }
+    })
+  }
+
+  function apply() {
+    setActive({ ...pending })
+    setOpenKey(null)
+  }
+
+  function reset() {
+    setPending(EMPTY_FILTERS)
+    setActive(EMPTY_FILTERS)
+    setOpenKey(null)
+  }
+
+  function removeChip(key, val) {
+    const next = { ...active, [key]: active[key].filter(v => v !== val) }
+    setActive(next)
+    setPending(next)
+  }
+
+  const chips = FILTER_COLS.flatMap(c =>
+    (active[c.key] || []).map(val => ({ key: c.key, label: c.label, val }))
+  )
+
+  const BTN = {
+    display: 'inline-flex', alignItems: 'center', gap: 4,
+    padding: '4px 10px', borderRadius: 6, fontSize: 11,
+    fontFamily: '"IBM Plex Mono", monospace', cursor: 'pointer',
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Category buttons + Apply/Reset */}
+      <div ref={ref} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        {FILTER_COLS.map(({ key, label }) => {
+          const count  = (pending[key] || []).length
+          const isOpen = openKey === key
+          const opts   = options[key] || []
+          return (
+            <div key={key} style={{ position: 'relative' }}>
+              <button
+                onClick={() => setOpenKey(isOpen ? null : key)}
+                style={{
+                  ...BTN,
+                  background: count > 0 ? 'rgba(255,196,13,0.12)' : 'var(--surface-2)',
+                  border: `1px solid ${count > 0 || isOpen ? 'var(--amber)' : 'var(--border)'}`,
+                  color: count > 0 ? 'var(--amber)' : 'var(--muted)',
+                }}
+              >
+                + {label}{count > 0 ? ` (${count})` : ''}
+                <span style={{ fontSize: 8, opacity: 0.5 }}>{isOpen ? '▲' : '▼'}</span>
+              </button>
+
+              {isOpen && opts.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 60,
+                  minWidth: 190, maxWidth: 270, maxHeight: 230, overflowY: 'auto',
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.55)', padding: '4px 0',
+                }}>
+                  {opts.map(opt => {
+                    const checked = (pending[key] || []).includes(opt)
+                    return (
+                      <label
+                        key={opt}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '5px 12px', cursor: 'pointer',
+                          background: checked ? 'rgba(255,196,13,0.06)' : 'transparent',
+                          transition: 'background 0.1s',
+                        }}
+                        onMouseEnter={e => { if (!checked) e.currentTarget.style.background = 'var(--surface-2)' }}
+                        onMouseLeave={e => { if (!checked) e.currentTarget.style.background = checked ? 'rgba(255,196,13,0.06)' : 'transparent' }}
+                      >
+                        <input
+                          type="checkbox" checked={checked}
+                          onChange={() => toggle(key, opt)}
+                          style={{ accentColor: 'var(--amber)', cursor: 'pointer', flexShrink: 0 }}
+                        />
+                        <span style={{
+                          fontFamily: '"IBM Plex Mono", monospace', fontSize: 11,
+                          color: checked ? 'var(--amber)' : 'var(--text)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {opt}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
+
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            onClick={apply}
+            style={{
+              ...BTN,
+              background: hasPending ? 'var(--amber)' : 'var(--surface-2)',
+              border: `1px solid ${hasPending ? 'var(--amber)' : 'var(--border)'}`,
+              color: hasPending ? '#000' : 'var(--muted)',
+              cursor: hasPending ? 'pointer' : 'default',
+              fontWeight: hasPending ? 600 : 400,
+            }}
+          >
+            Apply
+          </button>
+          {(hasActive || hasPending) && (
+            <button
+              onClick={reset}
+              style={{
+                ...BTN, background: 'transparent',
+                border: '1px solid var(--border)', color: 'var(--muted)',
+              }}
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Active filter chips */}
+      {chips.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+          {chips.map(({ key, label, val }) => (
+            <span
+              key={`${key}:${val}`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '2px 8px', borderRadius: 20,
+                background: 'rgba(255,196,13,0.1)', border: '1px solid rgba(255,196,13,0.3)',
+                fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: 'var(--amber)',
+              }}
+            >
+              <span style={{ color: 'var(--muted)', fontSize: 9 }}>{label}:</span> {val}
+              <button
+                onClick={() => removeChip(key, val)}
+                style={{
+                  background: 'none', border: 'none', color: 'var(--muted)',
+                  cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Pagination({ page, totalPages, total, pageSize, onChange }) {
   const [jumpVal, setJumpVal] = useState('')
 
@@ -210,6 +395,7 @@ function Pagination({ page, totalPages, total, pageSize, onChange }) {
 
 export default function Findings() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [findings,     setFindings]    = useState([])
   const [total,        setTotal]       = useState(0)
   const [loading,      setLoading]     = useState(true)
@@ -222,6 +408,17 @@ export default function Findings() {
   // null = idle; object = { total, done, errors, cancelled, finished }
   const [bulkTriage,   setBulkTriage]  = useState(null)
   const [page,         setPage]        = useState(0)
+  // Parse ?cves=... once at init so the first load() call already uses it
+  const [pendingFilters, setPendingFilters] = useState(() => {
+    const list = new URLSearchParams(window.location.search).get('cves')
+    if (list) { const v = list.split(',').map(s => s.trim()).filter(Boolean); if (v.length) return { ...EMPTY_FILTERS, cve_id: v } }
+    return EMPTY_FILTERS
+  })
+  const [activeFilters, setActiveFilters] = useState(() => {
+    const list = new URLSearchParams(window.location.search).get('cves')
+    if (list) { const v = list.split(',').map(s => s.trim()).filter(Boolean); if (v.length) return { ...EMPTY_FILTERS, cve_id: v } }
+    return EMPTY_FILTERS
+  })
   const cancelRef = useRef(false)
 
   const { sorted: colSorted, col: sortCol, dir: sortDir, toggle: toggleSort } =
@@ -229,16 +426,35 @@ export default function Findings() {
 
   const load = useCallback(() => {
     setLoading(true)
-    fetchFindings({ limit: 200, offset: 0 })
+    const params = { limit: 200, offset: 0 }
+    if (activeFilters.cve_id?.length) {
+      params.cve_ids = activeFilters.cve_id.join(',')
+      params.limit   = 500  // CVE-scoped fetch can return more
+    }
+    fetchFindings(params)
       .then(r => {
         setFindings(r.data?.data ?? [])
         setTotal(r.data?.total ?? 0)
       })
       .catch(e => setError(e.message || 'Failed to load findings'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [activeFilters.cve_id]) // re-fetch when CVE filter changes
 
   useEffect(() => { load() }, [load])
+
+  // Clear the ?cves= URL param once the initial state has consumed it
+  useEffect(() => {
+    if (searchParams.get('cves')) setSearchParams({}, { replace: true })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const availableOptions = useMemo(() => ({
+    cve_id:    [...new Set(findings.map(f => f.cve_id).filter(Boolean))].sort(),
+    hostname:  [...new Set(findings.map(f => f.hostname).filter(Boolean))].sort(),
+    component: [...new Set(findings.map(f => f.component).filter(Boolean))].sort(),
+    severity:  ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'].filter(s =>
+                 findings.some(f => (f.severity || '').toUpperCase() === s)),
+    state:     [...new Set(findings.map(f => f.state || 'NEW').filter(Boolean))].sort(),
+  }), [findings])
 
   const handleRunTriage = async (findingId) => {
     setRunning(prev => ({ ...prev, [findingId]: true }))
@@ -280,10 +496,23 @@ export default function Findings() {
   // Warn when filter is on but there are no triaged findings at all
   const triagedCount = sorted.filter(f => f.triage_class != null).length
 
-  useEffect(() => { setPage(0) }, [sort, fpThreshold, sortCol, sortDir])
+  // Apply field filters on top of the FP-filter output
+  const hasFieldFilters = FILTER_COLS.some(c => activeFilters[c.key]?.length > 0)
+  const filtered = hasFieldFilters
+    ? visible.filter(f => {
+        if (activeFilters.cve_id.length    && !activeFilters.cve_id.includes(f.cve_id))                          return false
+        if (activeFilters.hostname.length  && !activeFilters.hostname.includes(f.hostname))                       return false
+        if (activeFilters.component.length && !activeFilters.component.includes(f.component))                     return false
+        if (activeFilters.severity.length  && !activeFilters.severity.includes((f.severity || '').toUpperCase())) return false
+        if (activeFilters.state.length     && !activeFilters.state.includes(f.state || 'NEW'))                    return false
+        return true
+      })
+    : visible
 
-  const totalPages = Math.ceil(visible.length / PAGE_SIZE) || 1
-  const pageItems  = visible.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  useEffect(() => { setPage(0) }, [sort, fpThreshold, sortCol, sortDir, activeFilters])
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1
+  const pageItems  = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
   const selectStyle = {
     background: 'var(--surface-2)', border: '1px solid var(--border)',
@@ -542,9 +771,25 @@ export default function Findings() {
         </div>
 
         <div style={{ marginLeft: 'auto', fontFamily: '"IBM Plex Mono", monospace', fontSize: 10, color: 'var(--muted)' }}>
-          {visible.length} / {total} findings
+          {hasFieldFilters ? `${filtered.length} of ` : ''}{visible.length} / {total} findings
         </div>
       </div>
+
+      {/* Field filter bar */}
+      {!loading && !error && findings.length > 0 && (
+        <div style={{
+          padding: '12px 16px', borderRadius: 10,
+          background: 'var(--surface)', border: '1px solid var(--border)',
+        }}>
+          <FilterBar
+            options={availableOptions}
+            pending={pendingFilters}
+            setPending={setPendingFilters}
+            active={activeFilters}
+            setActive={setActiveFilters}
+          />
+        </div>
+      )}
 
       {/* Table */}
       {loading ? <Spinner /> : error ? (
@@ -560,12 +805,18 @@ export default function Findings() {
             No findings yet — upload a scan file to populate this list.
           </p>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="vra-card" style={{ textAlign: 'center', padding: '48px 0' }}>
+          <p style={{ color: 'var(--muted)', fontSize: 13 }}>
+            No findings match the active filters — try adjusting or resetting them.
+          </p>
+        </div>
       ) : (
         <>
           {/* Pagination — top */}
           {totalPages > 1 && (
             <div className="vra-card" style={{ padding: 0 }}>
-              <Pagination page={page} totalPages={totalPages} total={visible.length} pageSize={PAGE_SIZE} onChange={setPage} />
+              <Pagination page={page} totalPages={totalPages} total={filtered.length} pageSize={PAGE_SIZE} onChange={setPage} />
             </div>
           )}
 
@@ -718,7 +969,7 @@ export default function Findings() {
           {/* Pagination — bottom */}
           {totalPages > 1 && (
             <div className="vra-card" style={{ padding: 0 }}>
-              <Pagination page={page} totalPages={totalPages} total={visible.length} pageSize={PAGE_SIZE} onChange={setPage} />
+              <Pagination page={page} totalPages={totalPages} total={filtered.length} pageSize={PAGE_SIZE} onChange={setPage} />
             </div>
           )}
         </>

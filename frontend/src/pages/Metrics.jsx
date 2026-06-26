@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
+  CartesianGrid,
   ResponsiveContainer,
   PieChart,
   Pie,
@@ -83,10 +84,12 @@ export default function Metrics() {
     .filter(([, v]) => v > 0)
     .map(([name, value]) => ({ name, value }))
 
-  // Determine area keys for timeline
-  const areaKeys = timelineDays.length > 0
-    ? Object.keys(timelineDays[0]).filter((k) => k !== 'date' && k !== 'day')
-    : []
+  // Determine bar keys for timeline — scan all days since zero-filled days have no keys
+  const RISK_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN']
+  const areaKeySet = new Set(
+    timelineDays.flatMap(d => Object.keys(d).filter(k => k !== 'date' && k !== 'day'))
+  )
+  const areaKeys = RISK_ORDER.filter(k => areaKeySet.has(k))
 
   // ── Security Posture KPIs (from overview data) ──────────────────────────────
   const kpiStrip = [
@@ -172,24 +175,41 @@ export default function Metrics() {
         {timelineDays.length === 0 ? (
           <div className="text-center py-8 text-sm" style={{ color: 'var(--muted)' }}>No timeline data</div>
         ) : (
-          <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={timelineDays} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
-              <XAxis dataKey="date" tick={{ fill: 'var(--muted)', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: 'var(--muted)', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)' }} />
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={timelineDays} margin={{ top: 8, right: 8, bottom: 4, left: 0 }} barCategoryGap="30%">
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: 'var(--muted)', fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={d => d.slice(5)}
+                interval={4}
+              />
+              <YAxis
+                tick={{ fill: 'var(--muted)', fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+                allowDecimals={false}
+                width={28}
+              />
+              <Tooltip
+                contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 12 }}
+                labelStyle={{ color: 'var(--muted)', fontFamily: '"IBM Plex Mono",monospace', fontSize: 11, marginBottom: 4 }}
+                cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+              />
               <Legend formatter={(value) => <span style={{ color: 'var(--muted)', fontSize: 11 }}>{value}</span>} />
               {areaKeys.map((key) => (
-                <Area
+                <Bar
                   key={key}
-                  type="monotone"
                   dataKey={key}
-                  stackId="1"
+                  stackId="a"
                   fill={RISK_COLORS[key.toUpperCase()] || '#888'}
-                  stroke={RISK_COLORS[key.toUpperCase()] || '#888'}
-                  fillOpacity={0.35}
+                  maxBarSize={36}
+                  radius={key === areaKeys[areaKeys.length - 1] ? [3, 3, 0, 0] : [0, 0, 0, 0]}
                 />
               ))}
-            </AreaChart>
+            </BarChart>
           </ResponsiveContainer>
         )}
       </Section>
@@ -198,8 +218,7 @@ export default function Metrics() {
       <Section title={`Overdue Remediation Jobs (${overdueJobs.length})`}>
         {overdueJobs.length === 0 ? (
           <div className="text-center py-8" style={{ color: 'var(--green)' }}>
-            <div className="text-3xl mb-2">✅</div>
-            <div className="text-sm">No overdue jobs — great job!</div>
+            <div className="text-sm">No overdue jobs — all within SLA.</div>
           </div>
         ) : (
           <div className="overflow-x-auto">

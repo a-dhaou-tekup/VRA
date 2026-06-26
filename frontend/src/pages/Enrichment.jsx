@@ -370,16 +370,47 @@ export default function Enrichment() {
 
         {/* table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 145 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 105 }} />
+              <col style={{ width: 115 }} />
+              <col style={{ width: 85 }} />
+              <col />
+            </colgroup>
             <thead>
               <tr className="border-b border-[var(--border)] text-[var(--muted)] text-xs">
-                <th className="px-4 py-2 text-left font-mono uppercase">CVE ID</th>
-                <th className="px-4 py-2 text-left font-mono uppercase">Vendor</th>
-                <th className="px-4 py-2 text-left font-mono uppercase">Product</th>
-                <th className="px-4 py-2 text-left font-mono uppercase">KEV Date</th>
-                <th className="px-4 py-2 text-left font-mono uppercase">EPSS</th>
-                <th className="px-4 py-2 text-left font-mono uppercase">CWE</th>
-                <th className="px-4 py-2 text-left font-mono uppercase">Description</th>
+                {[
+                  { label: 'CVE ID',      sort: 'cve_id'         },
+                  { label: 'Vendor',      sort: 'kev_vendor'     },
+                  { label: 'Product',     sort: null             },
+                  { label: 'KEV Date',    sort: 'kev_added_date' },
+                  { label: 'EPSS',        sort: 'epss_score'     },
+                  { label: 'CWE',         sort: null             },
+                  { label: 'Description', sort: null             },
+                ].map(({ label, sort: s }) => {
+                  const active = s && catalogSort === s
+                  return (
+                    <th
+                      key={label}
+                      onClick={s ? () => {
+                        if (catalogSort === s) setCatalogOrder(o => o === 'asc' ? 'desc' : 'asc')
+                        else { setCatalogSort(s); setCatalogOrder('asc') }
+                      } : undefined}
+                      className="px-4 py-2 text-left font-mono uppercase"
+                      style={{ cursor: s ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap', color: active ? 'var(--amber)' : undefined }}
+                    >
+                      {label}
+                      {s && (
+                        <span style={{ marginLeft: 4, fontSize: 10, opacity: active ? 1 : 0.25, color: active ? 'var(--amber)' : 'inherit' }}>
+                          {active ? (catalogOrder === 'asc' ? '↑' : '↓') : '↕'}
+                        </span>
+                      )}
+                    </th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
@@ -427,10 +458,10 @@ export default function Enrichment() {
                           </a>
                         </div>
                       </td>
-                      <td className="px-4 py-2 text-xs text-white whitespace-nowrap max-w-[130px] truncate">
+                      <td className="px-4 py-2 text-xs text-white overflow-hidden text-ellipsis whitespace-nowrap">
                         {row.kev_vendor || <span className="text-[var(--muted)]">—</span>}
                       </td>
-                      <td className="px-4 py-2 text-xs text-[var(--muted)] whitespace-nowrap max-w-[130px] truncate">
+                      <td className="px-4 py-2 text-xs text-[var(--muted)] overflow-hidden text-ellipsis whitespace-nowrap">
                         {row.kev_product || '—'}
                       </td>
                       <td className="px-4 py-2 text-xs text-[var(--muted)] font-mono whitespace-nowrap">
@@ -442,7 +473,7 @@ export default function Enrichment() {
                       <td className="px-4 py-2 text-xs font-mono text-[var(--muted)] whitespace-nowrap">
                         {row.nvd_cwe || '—'}
                       </td>
-                      <td className="px-4 py-2 text-xs text-[var(--muted)] max-w-xs truncate">
+                      <td className="px-4 py-2 text-xs text-[var(--muted)] overflow-hidden text-ellipsis whitespace-nowrap">
                         {row.kev_short_description || row.nvd_description || '—'}
                       </td>
                     </tr>

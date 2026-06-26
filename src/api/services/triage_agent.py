@@ -71,7 +71,7 @@ class TriageResult(BaseModel):
     @field_validator("justification", mode="before")
     @classmethod
     def _trim_justification(cls, v: str) -> str:
-        return str(v).strip()[:200]
+        return str(v).strip()[:300]
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -87,14 +87,15 @@ def _load_rag_config() -> dict:
 # ── Enrichment cache lookup ───────────────────────────────────────────────────
 
 def _lookup_enrichment(cve_id: str) -> dict:
-    """Return EPSS score and KEV data for a CVE from the local enrichment cache."""
+    """Return EPSS, KEV, and NVD data for a CVE from the local enrichment cache."""
     if not cve_id or not ENRICHMENT_DB.exists():
         return {"epss_score": 0.0, "kev_flag": 0}
     try:
         conn = sqlite3.connect(str(ENRICHMENT_DB), timeout=5)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT epss_score, kev_flag, kev_short_description, kev_required_action "
+            "SELECT epss_score, kev_flag, kev_short_description, kev_required_action,"
+            "       nvd_description, nvd_cwe "
             "FROM cve_context WHERE cve_id = ?",
             (cve_id,),
         ).fetchone()
@@ -105,6 +106,8 @@ def _lookup_enrichment(cve_id: str) -> dict:
                 "kev_flag":            int(row["kev_flag"] or 0),
                 "kev_description":     row["kev_short_description"] or "",
                 "kev_required_action": row["kev_required_action"] or "",
+                "nvd_description":     row["nvd_description"] or "",
+                "nvd_cwe":             row["nvd_cwe"] or "",
             }
     except Exception as exc:
         logger.warning("triage_agent: enrichment lookup failed — %s", exc)
@@ -171,7 +174,9 @@ Your job is to estimate likelihood.
 Classify the finding and respond with ONLY a valid JSON object with exactly three keys:
   "triage_class":  one of "likely_false_positive", "likely_valid", "needs_investigation"
   "confidence":    a float between 0.0 and 1.0
-  "justification": a single sentence (max 200 characters) explaining your classification
+  "justification": one or two sentences (max 300 characters) citing the specific evidence \
+you used — EPSS score, KEV status, NVD description, asset criticality, or RAG context. \
+Be specific: name the vulnerability type, attack vector, or exploitability factor.
 
 Do not include markdown fences, explanation, or any text outside the JSON object."""
 
@@ -180,11 +185,37 @@ def _build_prompt(finding: dict, enrichment: dict, asset: dict, chunks: list[dic
     kev_line = "Yes" if enrichment.get("kev_flag") else "No"
     if enrichment.get("kev_description"):
         kev_line += f" — {enrichment['kev_description'][:120]}"
+    if enrichment.get("kev_required_action"):
+        kev_line += f" | Required action: {enrichment['kev_required_action'][:80]}"
+
+    nvd_block = ""
+    if enrichment.get("nvd_description"):
+        nvd_block = f"\n  NVD summary: {enrichment['nvd_description'][:300]}"
+    if enrichment.get("nvd_cwe"):
+        try:
+            import json as _json
+            cwes = _json.loads(enrichment["nvd_cwe"])
+            if cwes:
+                nvd_block += f"\n  CWE:         {', '.join(cwes[:3])}"
+        except Exception:
+            pass
 
     context_block = ""
     for i, c in enumerate(chunks, start=1):
         src = f"[{c.get('source', '')}:{c.get('id', '')}]" if c.get("source") else f"[{i}]"
         context_block += f"\n{src} {c['text'][:400]}"
+
+    # Trigger fallback note when there is no textual context at all
+    no_text_context = (
+        not enrichment.get("nvd_description")
+        and not enrichment.get("kev_description")
+        and not chunks
+    )
+    fallback_note = (
+        "\n(No CVE description cached — use your knowledge of this CVE and component "
+        "to infer vulnerability type, attack vector, and exploitability.)"
+        if no_text_context else ""
+    )
 
     return (
         f"Finding to classify:\n"
@@ -197,7 +228,9 @@ def _build_prompt(finding: dict, enrichment: dict, asset: dict, chunks: list[dic
         f"  Criticality:{asset.get('criticality', 'unknown')}\n"
         f"  Environment:{asset.get('environment', 'unknown')}\n"
         f"  Exposed:    {'Yes' if asset.get('internet_exposed') else 'No'}\n"
-        + (f"\nAdvisory context:{context_block}" if context_block else "\n(No advisory context retrieved)")
+        + nvd_block
+        + (f"\nAdvisory context:{context_block}" if context_block else "")
+        + fallback_note
         + "\n\nReturn JSON only."
     )
 

@@ -153,7 +153,11 @@ function useBlastGraph({ canvasRef, graphData, onSelect, onZoomChange }) {
         nd.vx += (W / 2 - nd.x) * GRAVITY * alpha
         nd.vy += (H / 2 - nd.y) * GRAVITY * alpha
         nd.vx *= DAMPING; nd.vy *= DAMPING
+        // clamp velocity so dense graphs don't explode numerically
+        if (nd.vx > 50) nd.vx = 50; else if (nd.vx < -50) nd.vx = -50
+        if (nd.vy > 50) nd.vy = 50; else if (nd.vy < -50) nd.vy = -50
         nd.x  += nd.vx;   nd.y  += nd.vy
+        if (!isFinite(nd.x) || !isFinite(nd.y)) { nd.x = W / 2; nd.y = H / 2; nd.vx = 0; nd.vy = 0 }
       }
       // Decay alpha — reaches ALPHA_STOP in ≈ 180 frames (3 s at 60 fps)
       const next = alpha * 0.975
@@ -683,13 +687,15 @@ function Row({ dot, children }) {
 // ── Blast-radius section (graph + tabs) ────────────────────────────────────────
 
 function BlastRadiusSection({ findingId }) {
-  const [graphData, setGraphData] = useState(null)
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState(null)
-  const [depth,     setDepth]     = useState(2)
-  const [selected,  setSelected]  = useState(null)
-  const [zoomLevel, setZoomLevel] = useState(100)
-  const [tab,       setTab]       = useState('graph') // 'graph' | 'explanation'
+  const [graphData,     setGraphData]     = useState(null)
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState(null)
+  const [depth,         setDepth]         = useState(2)
+  const [selected,      setSelected]      = useState(null)
+  const [zoomLevel,     setZoomLevel]     = useState(100)
+  const [tab,           setTab]           = useState('graph') // 'graph' | 'explanation'
+  const [truncated,     setTruncated]     = useState(false)
+  const [nodeCountFull, setNodeCountFull] = useState(0)
   const canvasRef = useRef(null)
 
   const { fitToView, resetView, zoomBy } = useBlastGraph({
@@ -701,6 +707,7 @@ function BlastRadiusSection({ findingId }) {
 
   const load = useCallback(() => {
     setLoading(true); setError(null); setSelected(null); setGraphData(null)
+    setTruncated(false); setNodeCountFull(0)
     fetchBlastRadius(findingId, depth)
       .then(r => {
         const d = r.data?.data ?? r.data
@@ -708,6 +715,8 @@ function BlastRadiusSection({ findingId }) {
           nodes: d.nodes ?? [],
           links: (d.edges ?? []).map(e => ({ source: e.source, target: e.target, kind: e.kind })),
         })
+        setTruncated(d.truncated ?? false)
+        setNodeCountFull(d.node_count_full ?? 0)
       })
       .catch(e => setError(e.response?.data?.detail || e.message))
       .finally(() => setLoading(false))
@@ -814,8 +823,17 @@ function BlastRadiusSection({ findingId }) {
 
         {/* Status bar */}
         {graphData && nodeCount > 0 && (
-          <div style={{ display: 'flex', gap: 16, padding: '6px 2px', fontFamily: '"IBM Plex Mono",monospace', fontSize: 10, color: 'var(--muted)' }}>
+          <div style={{ display: 'flex', gap: 16, padding: '6px 2px', fontFamily: '"IBM Plex Mono",monospace', fontSize: 10, color: 'var(--muted)', flexWrap: 'wrap', alignItems: 'center' }}>
             <span>{nodeCount} nodes · {edgeCount} edges</span>
+            {truncated && (
+              <span style={{
+                color: 'var(--amber)', background: 'rgba(255,196,13,0.08)',
+                border: '1px solid rgba(255,196,13,0.25)', borderRadius: 4,
+                padding: '1px 7px',
+              }}>
+                ⚠ graph capped — showing {nodeCount} of {nodeCountFull} nodes (closest to asset)
+              </span>
+            )}
             <span style={{ color: 'var(--border)' }}>|</span>
             <span>Scroll to zoom · Drag canvas to pan · Click node for details · Dbl-click to unpin / fit</span>
           </div>

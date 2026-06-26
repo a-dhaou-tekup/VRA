@@ -606,6 +606,33 @@ export default function JobDetail() {
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="page-title font-mono text-lg">{jobLabel(job) || job?.product_name || job?.main_product || id}</h1>
           <RiskBadge level={job?.risk_level || job?.max_risk_level} />
+          {/* Link to findings filtered to this job's CVEs */}
+          {(() => {
+            const cves = (() => {
+              if (Array.isArray(job?.cves)) return job.cves
+              if (typeof job?.cve_list === 'string') {
+                try { return JSON.parse(job.cve_list) } catch { return job.cve_list.split(',').map(s => s.trim()).filter(Boolean) }
+              }
+              return []
+            })()
+            if (!cves.length) return null
+            return (
+              <Link
+                to={`/findings?cves=${cves.join(',')}`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '4px 12px', borderRadius: 6,
+                  background: 'rgba(78,143,175,0.1)', border: '1px solid rgba(78,143,175,0.35)',
+                  color: '#4e8faf', fontSize: 11, fontFamily: '"IBM Plex Mono", monospace',
+                  textDecoration: 'none', whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(78,143,175,0.2)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'rgba(78,143,175,0.1)'}
+              >
+                ⤷ View Findings ({cves.length} CVE{cves.length !== 1 ? 's' : ''})
+              </Link>
+            )
+          })()}
           {job?.kev_count > 0 || job?.kev_present ? (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono font-semibold"
               style={{ background: 'rgba(224,82,82,0.15)', color: 'var(--red)', border: '1px solid rgba(224,82,82,0.3)' }}>

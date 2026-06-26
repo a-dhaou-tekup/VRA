@@ -86,7 +86,6 @@ export default function RiskRegister() {
         </div>
       ) : rows.length === 0 ? (
         <div className="vra-card text-center py-12" style={{ color: 'var(--muted)' }}>
-          <div className="text-4xl mb-3">✅</div>
           <div className="text-sm">No active risk acceptances — all risks are being remediated.</div>
         </div>
       ) : (

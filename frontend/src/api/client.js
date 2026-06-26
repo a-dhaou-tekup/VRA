@@ -164,8 +164,8 @@ export const backfillFindings      = ()           => api.post('/api/findings/bac
 export const reprocessUpload       = (uploadId)   => api.post(`/api/uploads/${uploadId}/reprocess`)
 
 // ─── Graph (blast radius + similarity) ────────────────────────────────────────
-export const fetchBlastRadius    = (findingId, depth = 2) =>
-  api.get(`/api/findings/${findingId}/blast-radius`, { params: { depth } })
+export const fetchBlastRadius    = (findingId, depth = 2, maxNodes = 80) =>
+  api.get(`/api/findings/${findingId}/blast-radius`, { params: { depth, max_nodes: maxNodes } })
 export const fetchSimilarFindings = (findingId, k = 10) =>
   api.get(`/api/findings/${findingId}/similar`, { params: { k } })
 export const refreshGraph = () =>

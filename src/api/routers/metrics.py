@@ -132,4 +132,11 @@ def metrics_timeline(
         cnt   = row["cnt"]
         timeline.setdefault(day, {})[level] = cnt
 
-    return {"data": timeline}
+    # Zero-fill every day in the window so the x-axis is always complete
+    today = datetime.now(timezone.utc).date()
+    for i in range(30, -1, -1):
+        day_str = (today - timedelta(days=i)).isoformat()
+        if day_str not in timeline:
+            timeline[day_str] = {}
+
+    return {"data": dict(sorted(timeline.items()))}

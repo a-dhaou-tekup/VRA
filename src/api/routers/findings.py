@@ -161,10 +161,11 @@ def submit_manual_findings(
 
 @router.get("/api/findings/")
 def list_findings(
-    limit:  int = Query(50, ge=1, le=500),
-    offset: int = Query(0,  ge=0),
-    conn:   sqlite3.Connection = Depends(get_db),
-    user:   dict               = Depends(get_current_user),
+    limit:   int           = Query(50, ge=1, le=500),
+    offset:  int           = Query(0,  ge=0),
+    cve_ids: Optional[str] = Query(None, description="Comma-separated CVE IDs to filter"),
+    conn:    sqlite3.Connection = Depends(get_db),
+    user:    dict               = Depends(get_current_user),
 ):
     """Return findings with their auto_triage suggestion (LEFT JOIN).
 
@@ -172,9 +173,20 @@ def list_findings(
     (e.g. before the server has been restarted after a schema migration).
     """
     import sqlite3 as _sq
+
+    # Build optional WHERE clause for CVE filter
+    where = ""
+    where_params: list = []
+    if cve_ids:
+        id_list = [c.strip().upper() for c in cve_ids.split(",") if c.strip()]
+        if id_list:
+            placeholders = ",".join("?" * len(id_list))
+            where = f"WHERE f.cve_id IN ({placeholders})"
+            where_params = id_list
+
     try:
         rows = conn.execute(
-            """SELECT
+            f"""SELECT
                    f.id, f.upload_id, f.cve_id, f.hostname, f.component,
                    f.severity, f.ingest_method,
                    COALESCE(f.state, 'NEW') AS state,
@@ -183,11 +195,14 @@ def list_findings(
                    atr.model_version, atr.created_at AS triage_at
                FROM findings f
                LEFT JOIN auto_triage atr ON atr.finding_id = f.id
+               {where}
                ORDER BY f.created_at DESC
                LIMIT ? OFFSET ?""",
-            (limit, offset),
+            where_params + [limit, offset],
         ).fetchall()
-        total = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM findings f {where}", where_params
+        ).fetchone()[0]
     except _sq.OperationalError as exc:
         err = str(exc).lower()
         if "no such table" in err or "no such column" in err:

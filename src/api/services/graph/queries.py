@@ -70,10 +70,11 @@ def _get_finding_asset_node(finding_id: str, G: nx.DiGraph, conn: sqlite3.Connec
 
 # ── blast_radius ──────────────────────────────────────────────────────────────
 
-def blast_radius(finding_id: str, depth: int = 2, conn: Optional[sqlite3.Connection] = None) -> dict:
+def blast_radius(finding_id: str, depth: int = 2, max_nodes: int = 80, conn: Optional[sqlite3.Connection] = None) -> dict:
     """Bounded BFS from the affected asset; returns JSON-serialisable subgraph.
 
     Performance target: < 200 ms for depth <= 3.
+    max_nodes caps the returned node count; closest BFS nodes take priority.
     """
     from api.services.graph.cache import get_graph
     from api.db.connection import get_connection
@@ -143,8 +144,9 @@ def blast_radius(finding_id: str, depth: int = 2, conn: Optional[sqlite3.Connect
 
         # 3. BFS outward from the asset (and also include the CVE node)
         visited: set[str] = set()
+        ug = G.to_undirected()
         if asset_nid:
-            for nid in nx.bfs_tree(G.to_undirected(), asset_nid, depth_limit=depth).nodes():
+            for nid in nx.bfs_tree(ug, asset_nid, depth_limit=depth).nodes():
                 visited.add(nid)
         else:
             logger.warning("blast_radius: no asset node found for finding %s", finding_id)
@@ -155,7 +157,31 @@ def blast_radius(finding_id: str, depth: int = 2, conn: Optional[sqlite3.Connect
             for nbr in list(G.successors(cve_nid)) + list(G.predecessors(cve_nid)):
                 visited.add(nbr)
 
+        # ── Node cap — keep closest nodes first ───────────────────────────────
+        node_count_full = len(visited)
+        truncated = False
+        if node_count_full > max_nodes:
+            truncated = True
+            if asset_nid and asset_nid in ug:
+                dist = nx.single_source_shortest_path_length(ug, asset_nid, cutoff=depth)
+            else:
+                dist = {}
+            anchors = {n for n in [asset_nid, cve_nid] if n and n in visited}
+            sorted_nodes = sorted(
+                visited,
+                key=lambda n: (dist.get(n, depth + 1), -G.degree(n)),
+            )
+            anchor_list = [n for n in sorted_nodes if n in anchors]
+            rest_list   = [n for n in sorted_nodes if n not in anchors]
+            visited = set((anchor_list + rest_list)[:max_nodes])
+            logger.info(
+                "blast_radius: capped %d → %d nodes (max_nodes=%d)",
+                node_count_full, len(visited), max_nodes,
+            )
+
         result = _subgraph_to_json(G, visited)
+        result["truncated"]       = truncated
+        result["node_count_full"] = node_count_full
 
     finally:
         if not owned:
