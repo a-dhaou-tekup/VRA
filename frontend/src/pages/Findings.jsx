@@ -136,6 +136,78 @@ const SORT_OPTIONS = [
   { value: 'confidence', label: 'Confidence (high → low)' },
 ]
 
+const PAGE_SIZE = 25
+
+function Pagination({ page, totalPages, total, pageSize, onChange }) {
+  const [jumpVal, setJumpVal] = useState('')
+
+  function pageNums() {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i)
+    const out = [0]
+    if (page > 3)               out.push('...')
+    const lo = Math.max(1, page - 2)
+    const hi = Math.min(totalPages - 2, page + 2)
+    for (let i = lo; i <= hi; i++) out.push(i)
+    if (page < totalPages - 4)  out.push('...')
+    out.push(totalPages - 1)
+    return out
+  }
+
+  function jump(e) {
+    e.preventDefault()
+    const n = parseInt(jumpVal, 10)
+    if (!isNaN(n) && n >= 1 && n <= totalPages) { onChange(n - 1); setJumpVal('') }
+  }
+
+  const start = page * pageSize + 1
+  const end   = Math.min((page + 1) * pageSize, total)
+
+  const BTN = {
+    borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)',
+    cursor: 'pointer', fontSize: 12, padding: '4px 8px',
+    fontFamily: '"IBM Plex Mono", monospace',
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--muted)', padding: '8px 16px' }}>
+      <span style={{ fontSize: 12 }}>Showing {start}–{end} of {total}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+        <button onClick={() => onChange(Math.max(0, page - 1))} disabled={page === 0}
+          style={{ ...BTN, padding: '4px 10px', color: page === 0 ? 'var(--muted)' : 'var(--text)', cursor: page === 0 ? 'default' : 'pointer' }}>
+          ← Prev
+        </button>
+
+        {pageNums().map((p, idx) =>
+          p === '...'
+            ? <span key={`dots-${idx}`} style={{ padding: '0 2px', color: 'var(--muted)', fontSize: 12 }}>…</span>
+            : <button key={p} onClick={() => onChange(p)} style={{
+                ...BTN, minWidth: 32, textAlign: 'center',
+                border: `1px solid ${p === page ? 'var(--amber)' : 'var(--border)'}`,
+                background: p === page ? 'rgba(255,196,13,0.1)' : 'var(--surface)',
+                color: p === page ? 'var(--amber)' : 'var(--text)',
+                cursor: p === page ? 'default' : 'pointer',
+              }}>
+                {p + 1}
+              </button>
+        )}
+
+        <button onClick={() => onChange(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1}
+          style={{ ...BTN, padding: '4px 10px', color: page >= totalPages - 1 ? 'var(--muted)' : 'var(--text)', cursor: page >= totalPages - 1 ? 'default' : 'pointer' }}>
+          Next →
+        </button>
+
+        <form onSubmit={jump} style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+          <span style={{ fontSize: 11 }}>Go to</span>
+          <input type="number" min={1} max={totalPages} value={jumpVal} onChange={e => setJumpVal(e.target.value)}
+            style={{ width: 48, background: 'var(--dark)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 6, padding: '3px 6px', fontSize: 12, fontFamily: '"IBM Plex Mono", monospace', textAlign: 'center' }}
+          />
+          <button type="submit" style={{ ...BTN, color: 'var(--text)', padding: '3px 8px' }}>Go</button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 export default function Findings() {
   const navigate = useNavigate()
   const [findings,     setFindings]    = useState([])
@@ -149,6 +221,7 @@ export default function Findings() {
   const [backfillMsg,  setBackfillMsg] = useState('')
   // null = idle; object = { total, done, errors, cancelled, finished }
   const [bulkTriage,   setBulkTriage]  = useState(null)
+  const [page,         setPage]        = useState(0)
   const cancelRef = useRef(false)
 
   const { sorted: colSorted, col: sortCol, dir: sortDir, toggle: toggleSort } =
@@ -206,6 +279,11 @@ export default function Findings() {
 
   // Warn when filter is on but there are no triaged findings at all
   const triagedCount = sorted.filter(f => f.triage_class != null).length
+
+  useEffect(() => { setPage(0) }, [sort, fpThreshold, sortCol, sortDir])
+
+  const totalPages = Math.ceil(visible.length / PAGE_SIZE) || 1
+  const pageItems  = visible.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
   const selectStyle = {
     background: 'var(--surface-2)', border: '1px solid var(--border)',
@@ -483,19 +561,37 @@ export default function Findings() {
           </p>
         </div>
       ) : (
-        <div className="vra-card" style={{ padding: 0, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
+        <>
+          {/* Pagination — top */}
+          {totalPages > 1 && (
+            <div className="vra-card" style={{ padding: 0 }}>
+              <Pagination page={page} totalPages={totalPages} total={visible.length} pageSize={PAGE_SIZE} onChange={setPage} />
+            </div>
+          )}
+
+          <div className="vra-card" style={{ padding: 0, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: 140 }} />
+                <col style={{ width: 160 }} />
+                <col />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 140 }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 90 }} />
+              </colgroup>
+              <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 {[
-                  { col: 'cve_id',       label: 'CVE ID'       },
-                  { col: 'hostname',     label: 'Host'         },
-                  { col: 'component',    label: 'Component'    },
-                  { col: 'severity',     label: 'Severity'     },
-                  { col: 'triage_class', label: 'AI Suggestion'},
-                  { col: 'ingest_method',label: 'Method'       },
-                  { col: 'state',        label: 'State'        },
-                  { col: null,           label: ''             },
+                  { col: 'cve_id',        label: 'CVE ID'        },
+                  { col: 'hostname',      label: 'Host'          },
+                  { col: 'component',     label: 'Component'     },
+                  { col: 'severity',      label: 'Severity'      },
+                  { col: 'triage_class',  label: 'AI Suggestion' },
+                  { col: 'ingest_method', label: 'Method'        },
+                  { col: 'state',         label: 'State'         },
+                  { col: null,            label: ''              },
                 ].map(({ col: c, label }) =>
                   c ? (
                     <SortTh key={c} col={c} sortCol={sortCol} sortDir={sortDir} onSort={toggleSort}
@@ -505,18 +601,18 @@ export default function Findings() {
                       {label}
                     </SortTh>
                   ) : (
-                    <th key="actions" style={{ padding: '10px 16px', width: 90 }} />
+                    <th key="actions" style={{ padding: '10px 16px' }} />
                   )
                 )}
               </tr>
             </thead>
             <tbody>
-              {visible.map((f, i) => (
+              {pageItems.map((f, i) => (
                 <tr
                   key={f.id}
                   style={{
                     cursor: 'pointer',
-                    borderBottom: i < visible.length - 1 ? '1px solid var(--border)' : 'none',
+                    borderBottom: i < pageItems.length - 1 ? '1px solid var(--border)' : 'none',
                     transition: 'background 0.1s',
                   }}
                   onClick={() => navigate(`/findings/${f.id}`)}
@@ -536,7 +632,7 @@ export default function Findings() {
                   <td style={{
                     padding: '10px 16px',
                     fontFamily: '"IBM Plex Mono", monospace', fontSize: 11,
-                    color: 'var(--text)', maxWidth: 160,
+                    color: 'var(--text)',
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
                     {f.hostname || '—'}
@@ -545,7 +641,7 @@ export default function Findings() {
                   {/* Component */}
                   <td style={{
                     padding: '10px 16px', fontSize: 12, color: 'var(--muted)',
-                    maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
                     {f.component || '—'}
                   </td>
@@ -618,6 +714,14 @@ export default function Findings() {
             </tbody>
           </table>
         </div>
+
+          {/* Pagination — bottom */}
+          {totalPages > 1 && (
+            <div className="vra-card" style={{ padding: 0 }}>
+              <Pagination page={page} totalPages={totalPages} total={visible.length} pageSize={PAGE_SIZE} onChange={setPage} />
+            </div>
+          )}
+        </>
       )}
     </div>
   )
