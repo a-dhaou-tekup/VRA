@@ -11,6 +11,8 @@ import sys
 import logging
 from pathlib import Path
 
+sys.stdout.reconfigure(encoding='utf-8')
+
 # Add src/ to path so `api`, `rag`, `ingestion` etc. are importable
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 

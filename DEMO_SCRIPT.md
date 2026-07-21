@@ -14,7 +14,7 @@ python scripts/precache_demo_ai.py   # pre-generates AI advice + chat Q&A (needs
 
 Morning of demo — verify all green:
 ```
-ollama list                          # must show qwen2.5:14b
+ollama list                          # must show qwen2.5:1b4
 curl http://localhost:8001/health    # {"status":"ok"}
 curl http://localhost:5174           # React app responds
 curl http://localhost:8001/api/rag/stats  # count > 0 (RAG indexed)

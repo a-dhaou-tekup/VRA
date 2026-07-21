@@ -16,6 +16,8 @@ import {
   ClipboardDocumentCheckIcon,
   Bars3Icon,
   XMarkIcon,
+  SunIcon,
+  MoonIcon,
 } from '@heroicons/react/24/outline'
 import { fetchRescanStatus } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -128,6 +130,16 @@ export default function Layout() {
   const location  = useLocation()
   const [rescanStatus, setRescanStatus] = useState(null)
   const [sidebarOpen, setSidebarOpen]   = useState(true)
+  const [theme, setTheme] = useState(
+    () => localStorage.getItem('vra-theme') ?? 'dark'
+  )
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('vra-theme', theme)
+  }, [theme])
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
   useEffect(() => {
     const load = () =>
@@ -171,7 +183,7 @@ export default function Layout() {
           style={{
             width: 'var(--sidebar-w)',
             background: 'linear-gradient(180deg, #0d0f1e 0%, #0b0d17 100%)',
-            borderRight: '1px solid var(--border)',
+            borderRight: '1px solid var(--sidebar-border)',
             position: 'fixed', top: 0, left: 0, height: '100vh',
             display: 'flex', flexDirection: 'column',
             zIndex: 50,
@@ -180,7 +192,7 @@ export default function Layout() {
           {/* Brand header */}
           <div style={{
             padding: '20px 16px 16px',
-            borderBottom: '1px solid var(--border)',
+            borderBottom: '1px solid var(--sidebar-border)',
             display: 'flex', alignItems: 'center', gap: 12,
           }}>
             <VraLogo />
@@ -255,12 +267,12 @@ export default function Layout() {
           {/* User footer */}
           <div style={{
             padding: '12px 10px',
-            borderTop: '1px solid var(--border)',
+            borderTop: '1px solid var(--sidebar-border)',
           }}>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 10,
               padding: '10px 12px', borderRadius: 10,
-              background: 'var(--surface)', border: '1px solid var(--border)',
+              background: 'var(--sidebar-surface)', border: '1px solid var(--sidebar-border)',
             }}>
               {/* Avatar circle */}
               <div style={{
@@ -358,6 +370,29 @@ export default function Layout() {
                 {resurfaced} resurfaced
               </div>
             )}
+
+            {/* Theme toggle */}
+            <button
+              onClick={toggleTheme}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                color: 'var(--muted)',
+                borderRadius: 8,
+                padding: '5px 7px',
+                cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'color 0.15s, border-color 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = 'var(--amber)'; e.currentTarget.style.borderColor = 'rgba(245,166,35,0.4)' }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'var(--muted)';  e.currentTarget.style.borderColor = 'var(--border)' }}
+            >
+              {theme === 'dark'
+                ? <SunIcon  style={{ width: 15, height: 15 }} />
+                : <MoonIcon style={{ width: 15, height: 15 }} />
+              }
+            </button>
 
             {/* Env badge */}
             <div style={{

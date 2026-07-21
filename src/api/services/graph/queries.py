@@ -142,28 +142,40 @@ def blast_radius(finding_id: str, depth: int = 2, max_nodes: int = 80, conn: Opt
                 if asset_nid:
                     break
 
-        # 3. BFS outward from the asset (and also include the CVE node)
+        # 3. BFS outward from the asset using infrastructure edges only.
+        #    Excluding "finding_of" edges prevents the BFS from flooding the
+        #    graph with every other CVE that happens to affect the same host —
+        #    the blast-radius question is about INFRASTRUCTURE impact, not CVE
+        #    inventory.  The specific CVE for this finding is re-attached below.
+        infra_ug = nx.Graph()
+        infra_ug.add_nodes_from(G.nodes(data=True))
+        for u, v, data in G.edges(data=True):
+            if data.get("kind") != "finding_of":
+                infra_ug.add_edge(u, v, **data)
+
         visited: set[str] = set()
-        ug = G.to_undirected()
         if asset_nid:
-            for nid in nx.bfs_tree(ug, asset_nid, depth_limit=depth).nodes():
+            for nid in nx.bfs_tree(infra_ug, asset_nid, depth_limit=depth).nodes():
                 visited.add(nid)
         else:
             logger.warning("blast_radius: no asset node found for finding %s", finding_id)
 
-        # Always include the CVE node and its 1-hop neighbours
+        # Always include the CVE for this specific finding + its structural
+        # neighbours (asset, component).  Skip other CVE nodes to avoid
+        # pulling in the full finding cloud.
         if cve_nid and cve_nid in G:
             visited.add(cve_nid)
             for nbr in list(G.successors(cve_nid)) + list(G.predecessors(cve_nid)):
-                visited.add(nbr)
+                if G.nodes[nbr].get("kind") != "cve":
+                    visited.add(nbr)
 
-        # ── Node cap — keep closest nodes first ───────────────────────────────
+        # ── Node cap (safety net for very dense infra graphs) ─────────────────
         node_count_full = len(visited)
         truncated = False
         if node_count_full > max_nodes:
             truncated = True
-            if asset_nid and asset_nid in ug:
-                dist = nx.single_source_shortest_path_length(ug, asset_nid, cutoff=depth)
+            if asset_nid and asset_nid in infra_ug:
+                dist = nx.single_source_shortest_path_length(infra_ug, asset_nid, cutoff=depth)
             else:
                 dist = {}
             anchors = {n for n in [asset_nid, cve_nid] if n and n in visited}

@@ -2,14 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── StrangeBee-inspired design tokens ──────────────────────────────────────── */
+/* ── Design tokens ───────────────────────────────────────────────────────────── */
 :root {
-  /* Brand accent — StrangeBee orange-gold */
+  /* Brand accent */
   --amber:     #f5a623;
   --amber-dim: #d4920a;
   --amber-glow: rgba(245,166,35,0.18);
 
-  /* Dark navy scale (deepest → lightest surface) */
+  /* Dark navy scale */
   --black:     #0b0d17;
   --dark:      #0f1120;
   --surface:   #151828;
@@ -31,8 +31,23 @@
   --purple:    #9b6dff;
   --orange:    #ff6b35;
 
-  /* Sidebar */
-  --sidebar-w: 244px;
+  /* Sidebar — always dark regardless of theme */
+  --sidebar-w:       244px;
+  --sidebar-surface: #151828;
+  --sidebar-border:  #252842;
+}
+
+/* ── Light mode overrides ────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --black:     #eaecf5;
+  --dark:      #f4f6fb;
+  --surface:   #ffffff;
+  --surface-2: #f0f3f9;
+  --surface-3: #e6eaf4;
+  --border:    #dde1ee;
+  --border-2:  #c8cdde;
+  --text:      #1a1c2e;
+  --muted:     #6c6f8e;
 }
 
 * { box-sizing: border-box; }
